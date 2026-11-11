@@ -206,10 +206,15 @@ function authView() {
   </div></div>`;
 }
 
+// Фото показывается, только если оно есть и включено в настройках: пустых заглушек нет
+function dishPhoto(it) {
+  if (settings().show_photos === '0' || !it.image) return '';
+  return `<div class="ph"><img src="${esc(it.image)}" alt="${esc(it.name)}" loading="lazy" onerror="this.parentNode.remove()"></div>`;
+}
 function dishCard(it) {
   const q = S.qty[it.id];
   return `<article class="dish" style="box-shadow:${q ? 'inset 0 0 0 2px #008037' : 'none'}">
-    <div class="ph"><span>фото блюда</span></div>
+    ${dishPhoto(it)}
     <div class="dish-name">${esc(it.name)}</div>
     <div class="dish-row"><div class="price">${fmt(it.price)}</div>
     ${q ? `<div class="stepper"><button class="m" data-act="dec" data-id="${it.id}" aria-label="Убрать">−</button>
@@ -261,7 +266,7 @@ function certCard(c) {
   const isImg = c.file_url && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(c.file_url);
   const pic = isImg
     ? `<a class="ph" href="${esc(c.file_url)}" target="_blank" rel="noopener"><img src="${esc(c.file_url)}" alt="${esc(c.title)}" loading="lazy"></a>`
-    : `<div class="ph"><span>${c.file_url ? 'документ' : 'скан сертификата'}</span></div>`;
+    : c.file_url ? `<div class="ph"><span>документ</span></div>` : '';
   return `<article class="dish">${pic}<div style="display:grid;gap:2px;padding:0 4px">
     <div class="cert-title">${esc(c.title)}</div><div class="cert-note">${esc(c.note || '')}</div>
     ${c.file_url ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
