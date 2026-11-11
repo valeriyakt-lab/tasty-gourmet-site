@@ -21,17 +21,40 @@ async function syncMenu() {
   const priceCat = String(cfg.iiko_price_category_id || '').trim();
 
   const ids = await iikoIds();
-  const m = await iiko('/api/menu/v3/by_id', { externalMenuId: menuId, organizationId: ids.org, ...(priceCat ? { priceCategoryId: priceCat } : {}) });
-  const fromIiko = [];
-  for (const g of m.itemsGroups || []) {
-    if (groups.length && !groups.includes(g.id)) continue;
-    for (const x of g.items || []) {
-      if (!x.productId || !String(x.name || '').trim()) continue;
-      const sizes = x.sizePrices || [], sz = sizes.find((s) => s.isDefault) || sizes[0] || {};
-      const img = x.buttonImageUrl || (x.images && x.images[0] && (x.images[0].imageUrl || x.images[0].url)) || (x.itemSizes && x.itemSizes[0] && x.itemSizes[0].buttonImageUrl) || '';
-      fromIiko.push({ id: x.productId, name: String(x.name).trim(), price: Number(sz.price), group: stripNum(g.name), image: /^https?:\/\//.test(img) ? img : '' });
-    }
+  const num = (p) => { const v = p && typeof p === 'object' ? p.currentPrice : p; return Number(v); };
+  const img = (x) => { const u = x.buttonImageUrl || (x.images && x.images[0] && (x.images[0].imageUrl || x.images[0].url)) || (x.itemSizes && x.itemSizes[0] && x.itemSizes[0].buttonImageUrl) || ''; return /^https?:\/\//.test(u) ? u : ''; };
+  // формат 1 (как в сценарии n8n): itemsGroups[].items[] с productId и sizePrices
+  const parseV3 = (m) => { const out = []; for (const g of m.itemsGroups || []) for (const x of g.items || []) {
+    const id = x.productId || x.itemId, name = String(x.name || '').trim(); if (!id || !name) continue;
+    const sizes = x.sizePrices || [], sz = sizes.find((q) => q.isDefault) || sizes[0] || {};
+    out.push({ id, name, price: num(sz.price), group: stripNum(g.name), gid: g.id, image: img(x) }); } return out; };
+  // формат 2 (iikoCloud /api/2/menu/by_id): itemCategories[].items[] с itemId и itemSizes[].prices[]
+  const parseV2 = (m) => { const out = []; for (const g of m.itemCategories || []) for (const x of g.items || []) {
+    const id = x.itemId || x.productId, name = String(x.name || '').trim(); if (!id || !name) continue;
+    const sz = (x.itemSizes || []).find((q) => q.isDefault) || (x.itemSizes || [])[0] || {}, pr = (sz.prices || [])[0] || {};
+    out.push({ id, name, price: num(pr.price), group: stripNum(g.name), gid: g.id, image: img(x) }); } return out; };
+
+  const diag = [];
+  let fromIiko = [];
+  const attempts = [
+    ['/api/menu/v3/by_id', { externalMenuId: menuId, organizationId: ids.org, ...(priceCat ? { priceCategoryId: priceCat } : {}) }, parseV3],
+    ['/api/2/menu/by_id', { externalMenuId: menuId, organizationIds: [ids.org], ...(priceCat ? { priceCategoryId: priceCat } : {}) }, parseV2],
+  ];
+  for (const [path, body, parse] of attempts) {
+    try {
+      const m = await iiko(path, body);
+      const got = parse(m);
+      diag.push(path + ': блюд ' + got.length + (got.length ? '' : ' (поля ответа: ' + Object.keys(m).join(', ') + ')'));
+      if (got.length) { fromIiko = got; break; }
+    } catch (e) { diag.push(path + ': ' + e.message); }
   }
+  if (!fromIiko.length) {
+    let menus = '';
+    try { const l = await iiko('/api/2/menu', {}); menus = ((l.externalMenus || []).map((x) => x.id + ' «' + x.name + '»').join('; ')) || 'список пуст'; } catch (e) { menus = 'не удалось получить (' + e.message + ')'; }
+    throw new Error('Из iiko пришло 0 блюд для меню «' + menuId + '». ' + diag.join(' | ') + '. Доступные внешние меню: ' + menus);
+  }
+  // фильтр по группам применяем, только если он действительно подходит (иначе идентификаторы групп из старого сайта не совпадают с меню)
+  if (groups.length) { const f = fromIiko.filter((x) => groups.includes(x.gid)); if (f.length >= 5) fromIiko = f; }
 
   const items = (await sb('menu_items?select=id,name,price,active,iiko_id,sync_hidden,category_id,image_url&iiko_id=not.is.null')) || [];
   // защита: если iiko вернул пустое или подозрительно короткое меню, ничего не меняем
