@@ -74,3 +74,18 @@ label.f{display:grid;gap:4px;font-size:12px;color:#6e696a;font-weight:500}
 #tip .tl1{font-size:12px;color:#6e696a}
 @media(max-width:1000px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile:first-child{grid-column:span 2}}
 @media(max-width:560px){.tv.big{font-size:38px}.yax{min-width:34px}.hr{grid-template-columns:minmax(70px,34%) 1fr auto}}
+
+/* меню: список по категориям */
+.mcat{background:#fff;border-radius:16px;overflow:hidden}
+.mhead{display:flex;align-items:center;gap:10px;padding:12px 16px;font:700 14px Geologica,sans-serif;text-transform:uppercase;letter-spacing:.02em;border-bottom:1px solid #efece7}
+.mhead i{width:10px;height:10px;border-radius:50%}
+.mrow{display:grid;grid-template-columns:minmax(0,1fr) auto 100px 150px;gap:12px;align-items:center;padding:8px 16px;border-top:1px solid #f4f3f0}
+.mhead + .mrow{border-top:0}
+.mname{font-weight:500;min-width:0}
+.mphoto{display:flex;align-items:center;gap:8px}
+.mphoto img{width:36px;height:36px;object-fit:cover;border-radius:8px}
+.btn.sm{padding:4px 10px;font-size:12px;cursor:pointer;display:inline-block}
+.mprice{width:100%;text-align:right}
+.mhide{display:flex;align-items:center;gap:6px;font-size:13px;color:#6e696a;white-space:nowrap}
+details.card summary{cursor:pointer}
+@media(max-width:700px){.mrow{grid-template-columns:minmax(0,1fr) 90px;grid-template-areas:'n n' 'p h';}.mrow .mname{grid-area:n}.mrow .mphoto{display:none}.mrow .mprice{grid-area:p}.mrow .mhide{grid-area:h}}
