@@ -35,7 +35,7 @@ const S = {
   qty: {}, pend: {}, pickup: false, addr: '', q: '', active: 0, comment: '',
   cartOpen: false, sending: false, done: null, cartError: '',
   modal: null, draftName: '', repOrder: null, repAddr: '', newAddr: '',
-  openOrder: null, idem: null, cartNotice: '',
+  openOrder: null, idem: null, cartNotice: '', gate: null,
   fbKind: 'review', fbRating: 5, fbText: '', fbSent: false, fbError: '', fbSending: false,
 };
 
@@ -48,9 +48,10 @@ async function load() {
   S.loading = true; render();
   try {
     const data = await rpc('shop_data', { p_token: S.token });
-    if (!data) { store.del(TOKEN_KEY); S.token = null; S.data = null; S.fatal = 'Ссылка недействительна или доступ закрыт. Запросите новую у менеджера.'; }
+    if (!data) { store.del(TOKEN_KEY); S.token = null; S.data = null; S.gate = null; S.fatal = 'Ссылка недействительна. Запросите новую у менеджера.'; }
+    else if (data.state) { S.gate = data; S.data = null; S.fatal = null; }
     else {
-      S.data = data; S.fatal = null;
+      S.gate = null; S.data = data; S.fatal = null;
       if (!S.addr || !data.addresses.includes(S.addr)) S.addr = data.addresses[0] || '';
     }
   } catch (e) { S.fatal = 'Не удалось загрузить данные. Проверьте интернет и обновите страницу.'; }
@@ -111,7 +112,21 @@ function scrollToCat(i) {
 }
 
 /* ---------- представления ---------- */
+function gateView() {
+  const g = S.gate, phone = (g.settings && g.settings.manager_phone) || '', sleeping = g.state === 'sleeping';
+  return `<div class="auth"><div class="auth-in"><div class="auth-head">
+    <div class="geo green" style="font-weight:700;font-size:30px;line-height:1.1;text-transform:uppercase;letter-spacing:.01em">Tasty Gourmet</div>
+    <div class="geo" style="font-weight:600;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0641c">оптовые заявки</div></div>
+    <div class="card" style="text-align:center">
+      <div class="geo" style="font-weight:600;font-size:20px">${esc(g.client && g.client.name)}</div>
+      <p style="margin:0">${sleeping ? 'Ссылка неактивна: давно не было заказов. Чтобы продолжить, свяжитесь с менеджером — он вернёт доступ.' : 'Доступ для вашей точки закрыт. Пожалуйста, свяжитесь с менеджером.'}</p>
+      ${phone ? `<a class="btn btn-orange" style="text-decoration:none;display:block" href="tel:${esc(phone.replace(/[^\d+]/g, ''))}">Позвонить: ${esc(phone)}</a>` : ''}
+      <button class="btn-ghost" data-act="retryLoad">Проверить снова</button>
+    </div></div></div>`;
+}
+
 function authView() {
+  if (S.gate) return gateView();
   const reg = S.authTab === 'reg';
   return `<div class="auth"><div class="auth-in">
     <div class="auth-head">
@@ -166,7 +181,9 @@ function menuView() {
   const secs = S.data.menu.map((c, i) => ({ c, i, items: c.items.filter((it) => !q || norm(it.name).includes(q)) })).filter((s) => s.items.length);
   const sc = sched();
   const certs = S.data.certificates;
+  const stopped = S.data.client.stopped;
   return `<main>
+    ${stopped ? stopBanner() : ''}
     <div class="sched" style="background:${sc.bg}">
       <div style="display:grid;gap:2px;min-width:0">
         <div class="geo" style="font-weight:600;font-size:16px;color:${sc.fg}">${sc.title}</div>
@@ -193,6 +210,9 @@ function dlUrl(c) {
   const name = String(c.title || 'certificate').replace(/[^\wА-Яа-яЁё.\- ]+/g, '').trim().replace(/\s+/g, '_') + '.' + ext;
   return c.file_url + (c.file_url.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(name);
 }
+const stopText = () => 'Приём заявок для вашей точки приостановлен. Пожалуйста, свяжитесь с менеджером' + (settings().manager_phone ? ': ' + settings().manager_phone : '') + '.';
+function stopBanner() { return `<div class="err" style="margin-top:20px;font-size:15px"><b>${esc(stopText())}</b></div>`; }
+
 function certCard(c) {
   const isImg = c.file_url && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(c.file_url);
   const pic = isImg
@@ -274,7 +294,7 @@ function modalView() {
 function cartView() {
   if (!S.cartOpen) return '';
   const lines = cartLines(), cnt = lines.reduce((a, l) => a + l.qty, 0), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
-  const min = minDelivery(), short = !S.pickup && cnt && sum < min;
+  const min = minDelivery(), stopped = S.data.client.stopped, short = !S.pickup && cnt && sum < min;
   const where = S.pickup ? 'Самовывоз: ' + (settings().pickup_address || '') : 'Доставка: ' + S.addr;
   let inner;
   if (S.done) {
@@ -299,11 +319,12 @@ function cartView() {
         <div style="font-weight:500">${esc(where)}</div>
         <textarea id="comment" rows="2" maxlength="500" placeholder="Комментарий: ориентир, время, пожелания" class="inp" style="font-size:15px;resize:vertical">${esc(S.comment)}</textarea></div></div>
       <div class="cart-foot">
+        ${stopped ? `<div class="err">${esc(stopText())}</div>` : ''}
         ${S.cartError ? `<div class="err">${esc(S.cartError)}</div>` : ''}
         ${!S.pickup ? `<div style="display:grid;gap:6px"><div style="font-size:14px;color:${short ? '#b53137' : '#008037'}">${short ? `До минимальной суммы доставки ${fmt(min)} осталось ${fmt(min - sum)}` : 'Минимальная сумма доставки набрана'}</div>
           <div class="bar"><div style="width:${Math.min(100, min ? sum / min * 100 : 100)}%;background:${short ? '#e0641c' : '#008037'}"></div></div></div>` : ''}
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><span class="muted">${cnt} шт · ${lines.length} поз.</span><b class="geo" style="font-size:24px;font-variant-numeric:tabular-nums">${fmt(sum)}</b></div>
-        <button class="btn btn-orange" data-act="submit" ${short || S.sending ? 'disabled' : ''} style="padding:16px 22px;font-size:17px">${S.sending ? 'Отправляем…' : 'Отправить заявку · ' + fmt(sum)}</button></div>`;
+        <button class="btn btn-orange" data-act="submit" ${short || S.sending || stopped ? 'disabled' : ''} style="padding:16px 22px;font-size:17px">${S.sending ? 'Отправляем…' : 'Отправить заявку · ' + fmt(sum)}</button></div>`;
   }
   return `<div class="shade" style="z-index:40" data-act="closeCart"></div><aside class="cart" role="dialog" aria-label="Корзина">
     <div class="cart-h"><div class="geo" style="font-weight:700;font-size:22px;text-transform:uppercase">${S.done ? 'Готово' : 'Корзина'}</div>
@@ -351,8 +372,8 @@ function render() {
 /* ---------- действия ---------- */
 function tokenFromText(t) {
   t = String(t || '').trim();
-  const m = t.match(/[?&]t=([0-9a-f]+)/i);
-  return m ? m[1] : /^[0-9a-f]{20,}$/i.test(t) ? t : null;
+  const m = t.match(/[?&#](?:t|k|key|token)=([A-Za-z0-9_-]{16,128})/i);
+  return m ? m[1] : /^[A-Za-z0-9_-]{20,128}$/.test(t) ? t : null;
 }
 const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
 
@@ -363,6 +384,7 @@ const repeatBlocked = (o, addr) => isToday(o.created_at) && !['failed', 'cancell
 
 const actions = {
   tab: (el) => { S.authTab = el.dataset.v; render(); },
+  retryLoad: () => load(),
   loginLink: () => { const t = tokenFromText(val('linkIn')); if (!t) { S.fatal = 'Не удалось распознать ссылку.'; render(); return; } S.token = t; store.set(TOKEN_KEY, t); load(); },
   sendReg: async () => {
     S.regError = '';
@@ -374,7 +396,7 @@ const actions = {
     catch (e) { S.regError = 'Проверьте название точки и телефон.'; }
     render();
   },
-  logout: () => { store.del(TOKEN_KEY); S.token = null; S.data = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
+  logout: () => { store.del(TOKEN_KEY); S.token = null; S.data = null; S.gate = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
   toMenu: () => { S.view = 'menu'; render(); },
   toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); },
   toFeedback: () => { S.view = 'feedback'; render(); window.scrollTo({ top: 0 }); },
@@ -430,7 +452,7 @@ const actions = {
   },
   submit: async () => {
     const lines = cartLines(), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
-    if (S.sending || !lines.length) return;
+    if (S.sending || !lines.length || S.data.client.stopped) return;
     if (!S.pickup && sum < minDelivery()) return;
     S.comment = val('comment') || S.comment; S.sending = true; S.cartError = ''; render();
     try {
@@ -444,7 +466,8 @@ const actions = {
       S.sending = false;
       const dup = /^duplicate:(.+)$/.exec(e.code || '');
       if (dup) S.idem = null;
-      S.cartError = dup ? `Такая же заявка на этот адрес уже отправлена сегодня (№ ${dup[1]}). Измените состав или выберите другой адрес.`
+      if (e.code === 'sleeping') { S.cartOpen = false; await load(); return; }
+      S.cartError = e.code === 'stopped' ? stopText() : dup ? `Такая же заявка на этот адрес уже отправлена сегодня (№ ${dup[1]}). Измените состав или выберите другой адрес.`
         : e.code === 'below_min' ? 'Сумма заказа ниже минимальной для доставки.'
         : e.code === 'unauthorized' ? 'Доступ закрыт. Обратитесь к менеджеру.' : 'Не удалось отправить заявку. Попробуйте ещё раз или позвоните менеджеру.';
       render();
@@ -492,8 +515,8 @@ function pushToKitchen(number) {
 /* ---------- старт ---------- */
 (function init() {
   const url = new URL(location.href);
-  const fromUrl = tokenFromText(url.search);
-  if (fromUrl) { store.set(TOKEN_KEY, fromUrl); url.searchParams.delete('t'); history.replaceState(null, '', url.pathname + url.search + url.hash); }
+  const fromUrl = tokenFromText(url.search + url.hash);
+  if (fromUrl) { store.set(TOKEN_KEY, fromUrl); ['t', 'k', 'key', 'token'].forEach((n) => url.searchParams.delete(n)); history.replaceState(null, '', url.pathname + url.search); }
   S.token = fromUrl || store.get(TOKEN_KEY);
   if (!S.token) { S.loading = false; render(); return; }
   load();

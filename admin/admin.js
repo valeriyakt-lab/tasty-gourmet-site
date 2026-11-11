@@ -28,7 +28,7 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null };
+const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, clientFilter: '', nStop: 0, nSleep: 0 };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
 async function api(path, body) {
@@ -61,7 +61,7 @@ async function loadTab(tab = S.tab) {
   }
   if (tab === 'feedback') d.feedback = (await db.from('feedback').select('*, clients(name)').order('created_at', { ascending: false }).limit(300)).data || [];
   if (tab === 'requests') d.requests = (await db.from('registration_requests').select('*').order('created_at', { ascending: false }).limit(100)).data || [];
-  if (tab === 'clients') d.clients = (await db.from('clients').select('*').order('name')).data || [];
+  if (tab === 'clients') d.clients = (await db.from('client_overview').select('*').order('name')).data || [];
   if (tab === 'menu') {
     d.cats = (await db.from('categories').select('*').order('sort').order('id')).data || [];
     d.items = (await db.from('menu_items').select('*').order('sort').order('id')).data || [];
@@ -73,6 +73,8 @@ async function loadTab(tab = S.tab) {
 async function countNew() {
   const r = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = r.count || 0;
   const f = await db.from('feedback').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newFb = f.count || 0;
+  const st = await db.from('client_overview').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('stop_list', true); S.nStop = st.count || 0;
+  const sl = await db.from('client_overview').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('sleeping', true); S.nSleep = sl.count || 0;
 }
 async function loadClientOrders() {
   if (!S.client) return;
@@ -81,7 +83,7 @@ async function loadClientOrders() {
 }
 async function openClient(id) {
   const [c, a, p, items] = await Promise.all([
-    db.from('clients').select('*').eq('id', id).single(),
+    db.from('client_overview').select('*').eq('id', id).single(),
     db.from('client_addresses').select('*').eq('client_id', id).order('id'),
     db.from('client_prices').select('item_id, price').eq('client_id', id),
     db.from('menu_items').select('id,name,price').order('name'),
@@ -156,6 +158,7 @@ function dashboardTab() {
   return `<div class="row"><h1>Дашборд</h1><span class="spacer"></span><button class="btn g" data-act="reload">Обновить</button></div>
   ${rangeBar()}
   ${(() => { const bad = dd.cur.filter((o) => o.status === 'failed').length; return bad ? `<div class="msg err">Не дошли до кассы: <b>${bad}</b>. <a href="#" data-act="toFailed">Открыть и отправить заново</a></div>` : ''; })()}
+  ${S.nStop || S.nSleep ? `<div class="msg" style="background:#fdf3dc;color:#6b4d0a">В стоп-листе: <b>${S.nStop}</b> · ссылка спит: <b>${S.nSleep}</b> · <a href="#" data-act="goClients" data-v="${S.nStop ? 'stop' : 'sleep'}">открыть</a>${S.nStop && S.nSleep ? ' · <a href="#" data-act="goClients" data-v="sleep">показать спящих</a>' : ''}</div>` : ''}
   <div class="tiles">
     ${tile('Выручка за период', fmt(m.rev), delta(m.rev, m.pRev), true)}
     ${tile('Заказов', m.n, delta(m.n, m.pN))}
@@ -205,15 +208,34 @@ function requestsTab() {
   </div>`).join('') : '<div class="card muted">Заявок нет</div>'}`;
 }
 
+function statusPills(c) {
+  const p = [];
+  if (c.status !== 'active') p.push('<span class="pill" style="background:#f6e3e4;color:#b53137">заблокирован</span>');
+  else {
+    if (c.stop_list) p.push(`<span class="pill" style="background:#f6e3e4;color:#b53137" title="${esc(c.stop_reason || '')}">стоп-лист${c.stop_reason ? ': ' + esc(c.stop_reason) : ''}</span>`);
+    if (c.sleeping) p.push('<span class="pill" style="background:#fdf3dc;color:#8a6410">ссылка спит</span>');
+    if (!p.length) p.push('<span class="pill" style="background:#e7f2eb;color:#006a2e">активен</span>');
+  }
+  return p.join(' ');
+}
+
 function clientsTab() {
   if (S.client) return clientDetail();
   const q = S.clientQ.toLowerCase();
-  const rows = (S.d.clients || []).filter((c) => !q || (c.name + ' ' + (c.phone || '')).toLowerCase().includes(q));
+  const F = S.clientFilter, all = S.d.clients || [];
+  const rows = all.filter((c) => (!q || (c.name + ' ' + (c.phone || '')).toLowerCase().includes(q)) &&
+    (!F || (F === 'stop' && c.stop_list) || (F === 'sleep' && c.sleeping && c.status === 'active') || (F === 'blocked' && c.status !== 'active')));
+  const cnt = { stop: all.filter((c) => c.stop_list).length, sleep: all.filter((c) => c.sleeping && c.status === 'active').length, blocked: all.filter((c) => c.status !== 'active').length };
   return `<div class="row"><h1>Клиенты</h1><span class="spacer"></span>
+    <select data-act="clientFilter"><option value="">Все (${all.length})</option><option value="stop" ${F === 'stop' ? 'selected' : ''}>Стоп-лист (${cnt.stop})</option><option value="sleep" ${F === 'sleep' ? 'selected' : ''}>Ссылка спит (${cnt.sleep})</option><option value="blocked" ${F === 'blocked' ? 'selected' : ''}>Заблокированные (${cnt.blocked})</option></select>
     <input class="inp" type="text" id="clientQ" placeholder="Поиск" value="${esc(S.clientQ)}"><button class="btn" data-act="newClient">+ Клиент</button></div>
-    <div class="card scroll"><table><tr><th>Название</th><th>Телефон</th><th>Статус</th><th></th></tr>
-    ${rows.map((c) => `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.phone || '')}</td><td>${c.status === 'active' ? 'активен' : '<span class="red">заблокирован</span>'}</td>
-      <td style="text-align:right"><button class="btn g" data-act="openClient" data-id="${c.id}">Открыть</button></td></tr>`).join('')}</table>
+    <div class="card scroll"><table><tr><th>Название</th><th>Телефон</th><th>Последний заказ</th><th>Статус</th><th></th></tr>
+    ${rows.map((c) => `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.phone || '')}</td><td class="muted">${c.last_order_at ? fdt(c.last_order_at) : 'нет заказов'}</td><td>${statusPills(c)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${c.status === 'active' ? (c.stop_list ? `<button class="btn g" data-act="stopOff" data-id="${c.id}">Снять стоп</button>` : `<button class="btn d" data-act="stopOn" data-id="${c.id}">В стоп-лист</button>`) : ''}
+        ${c.sleeping && c.status === 'active' ? `<button class="btn o" data-act="wake" data-id="${c.id}">Разбудить</button>` : ''}
+        <button class="btn g" data-act="openClient" data-id="${c.id}">Открыть</button></td></tr>`).join('')}</table>
+    ${rows.length ? '' : '<div class="muted">Никого нет</div>'}
     ${rows.length ? '' : '<div class="muted">Клиентов нет</div>'}</div>`;
 }
 
@@ -229,6 +251,13 @@ function clientDetail() {
       <label class="f">Контактное лицо<input type="text" data-cf="contact_person" value="${esc(c.contact_person || '')}"></label>
       <label class="f">Статус${sel({ active: 'Активен', blocked: 'Заблокирован' }, c.status, 'data-cf="status"')}</label>
     </div>
+    <div class="card"><b>Доступ</b>
+      <div>${statusPills(c)}</div>
+      <div class="muted">Последний заказ: ${c.last_order_at ? fdt(c.last_order_at) : 'нет заказов'}</div>
+      <label class="f">Причина стоп-листа (видна только вам)<input type="text" data-cf="stop_reason" value="${esc(c.stop_reason || '')}" placeholder="например: задолженность"></label>
+      <div class="row">${c.stop_list ? `<button class="btn g" data-act="stopOff" data-id="${c.id}">Снять со стоп-листа</button>` : `<button class="btn d" data-act="stopOn" data-id="${c.id}">В стоп-лист</button>`}
+        ${c.sleeping ? `<button class="btn o" data-act="wake" data-id="${c.id}">Разбудить ссылку</button>` : ''}</div>
+      <span class="muted">Стоп-лист: клиент видит сайт, но не может отправить заявку. «Спит»: ссылка не открывает меню, пока вы не разбудите её.</span></div>
     <div class="card"><b>Личная ссылка для входа</b>
       <div class="link" id="lnk">${esc(linkFor(c.access_token))}</div>
       <div class="row"><button class="btn" data-act="copyLink">Скопировать</button><button class="btn d" data-act="regen">Выдать новую (старая перестанет работать)</button></div></div>
@@ -359,7 +388,7 @@ function certsTab() {
 }
 
 function settingsTab() {
-  const names = { min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
+  const names = { sleep_days: 'Через сколько дней без заказов ссылка клиента «засыпает»', min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
   return `<h1>Настройки</h1>
   <div class="card"><b>Связь с Telegram и iiko</b>
     <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
@@ -395,6 +424,14 @@ const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
   reload: () => loadTab(),
+  clientFilter: (el) => { S.clientFilter = el.value; render(); },
+  goClients: async (el) => { S.tab = 'clients'; S.client = null; S.clientFilter = el.dataset.v; await loadTab('clients'); },
+  stopOn: async (el) => {
+    const reason = window.prompt('Причина (видна только вам), например: задолженность', ''); if (reason === null) return;
+    if (await run(db.from('clients').update({ stop_list: true, stop_reason: reason.trim() || null, stop_since: new Date().toISOString() }).eq('id', el.dataset.id), 'Клиент в стоп-листе: заявки отправить не сможет')) { await countNew(); await afterClientChange(el.dataset.id); }
+  },
+  stopOff: async (el) => { if (await run(db.from('clients').update({ stop_list: false, stop_reason: null, stop_since: null }).eq('id', el.dataset.id), 'Снят со стоп-листа')) { await countNew(); await afterClientChange(el.dataset.id); } },
+  wake: async (el) => { if (await run(db.from('clients').update({ woken_at: new Date().toISOString() }).eq('id', el.dataset.id), 'Ссылка снова работает')) { await countNew(); await afterClientChange(el.dataset.id); } },
   xlCancel: () => { S.xl = null; render(); },
   xlHide: (el) => { S.xl.hide = el.checked; S.xl.plan = planImport(S.xl.rows, S.xl.hide); render(); },
   xlExport: () => {
@@ -469,6 +506,7 @@ const A = {
   newCert: async () => { if (await run(db.from('certificates').insert({ title: 'Новый сертификат', active: false, sort: (S.d.certs || []).length + 1 }))) loadTab('certs'); },
   delCert: async (el) => { if (ask('Удалить сертификат?') && await run(db.from('certificates').delete().eq('id', el.dataset.id))) loadTab('certs'); },
 };
+async function afterClientChange(id) { await loadTab('clients'); if (S.client && String(S.client.c.id) === String(id)) await openClient(id); }
 async function reloadRange() { if (S.tab === 'clients' && S.client) { await loadClientOrders(); render(); } else await loadTab(S.tab === 'dashboard' ? 'dashboard' : 'orders'); }
 async function openClientTab(id) { S.tab = 'clients'; if (!S.d.clients) await loadTab('clients'); await openClient(id); }
 
