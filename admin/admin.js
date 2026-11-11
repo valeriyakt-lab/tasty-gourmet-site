@@ -65,6 +65,7 @@ async function loadTab(tab = S.tab) {
   if (tab === 'menu') {
     d.cats = (await db.from('categories').select('*').order('sort').order('id')).data || [];
     d.items = (await db.from('menu_items').select('*').order('sort').order('id')).data || [];
+    d.syncLast = ((await db.from('integration_settings').select('value').eq('key', 'iiko_menu_last').maybeSingle()).data || {}).value || null;
   }
   if (tab === 'certs') d.certs = (await db.from('certificates').select('*').order('sort').order('id')).data || [];
   if (tab === 'settings') d.settings = (await db.from('settings').select('*').order('key')).data || [];
@@ -338,6 +339,16 @@ function planImport(rows, hideMissing) {
   return plan;
 }
 
+function iikoSyncCard() {
+  const l = S.d.syncLast;
+  const list = (title, arr) => arr && arr.length ? `<div><b>${title} (${arr.length})</b><div class="muted" style="max-height:120px;overflow:auto;font-size:13px">${arr.slice(0, 40).map(esc).join('<br>')}${arr.length > 40 ? '<br>…' : ''}</div></div>` : '';
+  return `<div class="card"><b>Меню из iiko</b>
+    <span class="muted">Цены и наличие блюд берутся из внешнего меню iiko. Обновляется только по кнопке: нажмите её после того, как выгрузили меню в iikoWeb. Новые блюда из iiko добавляются <b>скрытыми</b>: проверьте их и включите.</span>
+    <div class="row"><button class="btn o" data-act="syncMenu">Обновить меню из iiko сейчас</button>
+      ${l ? `<span class="muted">Последнее обновление: ${fdt(l.at)} · блюд в iiko: ${l.total}</span>` : '<span class="muted">Ещё не обновлялось</span>'}</div>
+    ${l ? list('Изменились цены', l.prices) + list('Скрыты (нет в меню iiko)', l.hidden) + list('Возвращены в меню', l.restored) + list('Новые, скрыты, ждут вашей проверки', l.added) + list('Без цены в iiko', l.noPrice) : ''}</div>`;
+}
+
 function excelCard() {
   const x = S.xl;
   const list = (title, arr, cls) => arr.length ? `<div><b class="${cls || ''}">${title} (${arr.length})</b><div class="muted" style="max-height:140px;overflow:auto;font-size:13px">${arr.slice(0, 60).map(esc).join('<br>')}${arr.length > 60 ? '<br>…' : ''}</div></div>` : '';
@@ -357,6 +368,7 @@ function menuTab() {
   const { cats = [], items = [] } = S.d;
   const catOpts = Object.fromEntries([['', '— без категории —'], ...cats.map((c) => [c.id, c.name])]);
   return `<div class="row"><h1>Меню</h1><span class="spacer"></span><button class="btn g" data-act="newCat">+ Категория</button><button class="btn" data-act="newItem">+ Блюдо</button></div>
+  ${iikoSyncCard()}
   ${excelCard()}
   <div class="card scroll"><b>Категории</b><table><tr><th>Название</th><th>Цвет</th><th>Порядок</th><th>Показ</th><th></th></tr>
     ${cats.map((c) => `<tr><td><input type="text" data-t="categories" data-id="${c.id}" data-c="name" value="${esc(c.name)}"></td>
@@ -432,6 +444,13 @@ const A = {
   },
   stopOff: async (el) => { if (await run(db.from('clients').update({ stop_list: false, stop_reason: null, stop_since: null }).eq('id', el.dataset.id), 'Снят со стоп-листа')) { await countNew(); await afterClientChange(el.dataset.id); } },
   wake: async (el) => { if (await run(db.from('clients').update({ woken_at: new Date().toISOString() }).eq('id', el.dataset.id), 'Ссылка снова работает')) { await countNew(); await afterClientChange(el.dataset.id); } },
+  syncMenu: async (el) => {
+    el.disabled = true; el.textContent = 'Обновляем…';
+    const r = await api('/api/sync-menu', {});
+    if (r.ok) note(`Меню обновлено: цен изменено ${r.prices.length}, скрыто ${r.hidden.length}, возвращено ${r.restored.length}, новых ${r.added.length}`);
+    else note('Не удалось: ' + (r.error || 'ошибка'), true);
+    await loadTab('menu');
+  },
   xlCancel: () => { S.xl = null; render(); },
   xlHide: (el) => { S.xl.hide = el.checked; S.xl.plan = planImport(S.xl.rows, S.xl.hide); render(); },
   xlExport: () => {
