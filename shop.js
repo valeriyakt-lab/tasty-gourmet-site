@@ -366,7 +366,11 @@ const actions = {
   loginLink: () => { const t = tokenFromText(val('linkIn')); if (!t) { S.fatal = 'Не удалось распознать ссылку.'; render(); return; } S.token = t; store.set(TOKEN_KEY, t); load(); },
   sendReg: async () => {
     S.regError = '';
-    try { await rpc('submit_registration', { p_name: val('rName'), p_phone: val('rPhone'), p_address: val('rAddr'), p_contact: val('rContact') }); S.regSent = true; }
+    try {
+      const rid = await rpc('submit_registration_v2', { p_name: val('rName'), p_phone: val('rPhone'), p_address: val('rAddr'), p_contact: val('rContact') });
+      S.regSent = true;
+      try { fetch('/api/new-request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: rid }), keepalive: true }).catch(() => {}); } catch (e) {}
+    }
     catch (e) { S.regError = 'Проверьте название точки и телефон.'; }
     render();
   },

@@ -30,17 +30,49 @@ async function adminFromRequest(req) {
   return rows && rows.length ? u : null;
 }
 
-async function telegram(text) {
-  const token = process.env.TELEGRAM_BOT_TOKEN, chat = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chat) return { sent: false, reason: 'Telegram не настроен (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)' };
+// Подпись, с какого сайта пришло уведомление (у вас два сайта и один чат)
+const siteLabel = () => '🆕 ' + (process.env.TELEGRAM_SITE_LABEL || 'Новый сайт Tasty Gourmet');
+const siteUrl = () => (process.env.SITE_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? 'https://' + process.env.VERCEL_PROJECT_PRODUCTION_URL : '')).replace(/\/$/, '');
+
+async function tgCall(method, payload) {
+  const token = need(process.env.TELEGRAM_BOT_TOKEN, 'TELEGRAM_BOT_TOKEN');
+  const r = await fetch('https://api.telegram.org/bot' + token + '/' + method, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.description || 'Telegram вернул ошибку ' + r.status);
+  return j.result;
+}
+
+async function telegram(text, opts = {}) {
+  const chat = process.env.TELEGRAM_CHAT_ID;
+  if (!process.env.TELEGRAM_BOT_TOKEN || !chat) return { sent: false, reason: 'Telegram не настроен (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)' };
   try {
-    const r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chat, text: String(text).slice(0, 3900), disable_web_page_preview: true }),
-    });
-    const j = await r.json().catch(() => ({}));
-    return r.ok && j.ok ? { sent: true } : { sent: false, reason: j.description || 'Telegram вернул ошибку ' + r.status };
-  } catch (e) { return { sent: false, reason: 'Нет связи с Telegram: ' + e.message }; }
+    const m = await tgCall('sendMessage', { chat_id: chat, text: (siteLabel() + '\n' + text).slice(0, 3900), disable_web_page_preview: true, ...(opts.reply_markup ? { reply_markup: opts.reply_markup } : {}) });
+    return { sent: true, message_id: m.message_id };
+  } catch (e) { return { sent: false, reason: e.message }; }
+}
+
+// Секрет для проверки, что вызов пришёл именно от Telegram (отдельная переменная не нужна)
+const webhookSecret = () => require('crypto').createHash('sha256').update(need(process.env.TELEGRAM_BOT_TOKEN, 'TELEGRAM_BOT_TOKEN') + ':tgw').digest('hex');
+
+// Решение по заявке на регистрацию: одобрить (создаёт клиента) или отклонить
+async function decideRequest(id, action) {
+  const rid = encodeURIComponent(id);
+  const claim = await sb('registration_requests?id=eq.' + rid + '&status=eq.new', { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ status: action === 'approve' ? 'approved' : 'rejected' }) });
+  if (!claim || !claim.length) {
+    const ex = ((await sb('registration_requests?select=status&id=eq.' + rid)) || [])[0];
+    return { status: ex ? 'already' : 'missing', current: ex && ex.status };
+  }
+  const r = claim[0];
+  if (action !== 'approve') return { status: 'rejected', request: r };
+  try {
+    const c = (await sb('clients', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ name: r.name, phone: r.phone, contact_person: r.contact_person }) }))[0];
+    if (r.address) await sb('client_addresses', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ client_id: c.id, address: r.address }) });
+    await sb('registration_requests?id=eq.' + rid, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ client_id: c.id }) });
+    return { status: 'approved', request: r, link: siteUrl() + '/?t=' + c.access_token };
+  } catch (e) {
+    await sb('registration_requests?id=eq.' + rid, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'new' }) }).catch(() => {});
+    throw e;
+  }
 }
 
 const iikoConfigured = () => !!process.env.IIKO_API_LOGIN;
@@ -60,4 +92,4 @@ async function iiko(path, body) {
 
 const normPhone = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 11 ? '+7' + d.slice(1) : d.length === 10 ? '+7' + d : null; };
 
-module.exports = { sb, adminFromRequest, telegram, iiko, iikoConfigured, normPhone, need };
+module.exports = { sb, adminFromRequest, telegram, tgCall, webhookSecret, decideRequest, siteUrl, iiko, iikoConfigured, normPhone, need };

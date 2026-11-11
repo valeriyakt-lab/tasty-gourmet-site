@@ -1,5 +1,5 @@
 'use strict';
-const { adminFromRequest, telegram, iiko, iikoConfigured } = require('./_lib');
+const { adminFromRequest, telegram, tgCall, webhookSecret, siteUrl, iiko, iikoConfigured } = require('./_lib');
 
 // Проверка связи из админ-панели (только для администратора): Telegram и iiko.
 module.exports = async (req, res) => {
@@ -10,6 +10,14 @@ module.exports = async (req, res) => {
     if (body.what === 'telegram') {
       const t = await telegram('✅ Tasty Gourmet: проверка связи. Если вы видите это сообщение, уведомления об ошибках заказов будут приходить сюда.');
       return res.status(200).json({ ok: t.sent, message: t.sent ? 'Сообщение отправлено, проверьте Telegram' : t.reason });
+    }
+    if (body.what === 'telegram-webhook') {
+      // подключает кнопки «Одобрить/Отклонить»; отказывается, если у бота уже стоит чужой webhook (например, n8n)
+      const url = (siteUrl() || 'https://' + req.headers.host) + '/api/telegram';
+      const info = await tgCall('getWebhookInfo', {});
+      if (info.url && info.url !== url) return res.status(200).json({ ok: false, message: 'У этого бота уже подключён другой webhook (' + info.url + '). Скорее всего, он используется старым сайтом. Создайте отдельного бота для нового сайта, иначе старый сайт перестанет получать сообщения.' });
+      await tgCall('setWebhook', { url, secret_token: webhookSecret(), allowed_updates: ['callback_query'] });
+      return res.status(200).json({ ok: true, message: 'Кнопки подключены: ' + url });
     }
     if (body.what === 'iiko') {
       if (!iikoConfigured()) return res.status(200).json({ ok: false, message: 'Не задан IIKO_API_LOGIN в переменных окружения Vercel' });

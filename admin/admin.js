@@ -28,7 +28,7 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '' };
+const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
 async function api(path, body) {
@@ -260,10 +260,75 @@ function feedbackTab() {
       <span class="spacer"></span><button class="btn d" data-act="fbDel" data-id="${f.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">Пока ничего нет</div>'}`;
 }
 
+/* ---------- меню из Excel ---------- */
+const HDR = { cat: ['категория', 'category', 'группа'], name: ['название', 'блюдо', 'наименование', 'name'], price: ['цена', 'price', 'стоимость'], iiko: ['iiko id', 'iiko_id', 'iiko', 'код iiko', 'код'], sort: ['порядок', 'sort', 'сортировка'], active: ['показывать', 'активно', 'в меню', 'active'] };
+const cleanKey = (k) => String(k).trim().toLowerCase().replace(/\s+/g, ' ');
+const pick = (row, names) => { for (const k of Object.keys(row)) if (names.includes(cleanKey(k))) return row[k]; return undefined; };
+const toPrice = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+  const t = String(v).replace(/[\s\u00a0]|тг|₸/gi, '').replace(',', '.');
+  return /^\d+(\.\d+)?$/.test(t) ? Number(t) : NaN; // пустое или с буквами — ошибка, а не 0
+};
+const toBool = (v) => { const t = String(v).trim().toLowerCase(); if (t === '') return undefined; return !['нет', 'no', 'false', '0', 'н', '-'].includes(t); };
+const COLORS = ['#008037', '#e0641c', '#b53137', '#e9ae2e', '#1d4f91', '#6e696a'];
+
+function planImport(rows, hideMissing) {
+  const items = S.d.items || [], cats = S.d.cats || [];
+  const catByName = Object.fromEntries(cats.map((c) => [c.name.trim().toLowerCase(), c]));
+  const byIiko = {}, byName = {};
+  items.forEach((i) => { if (i.iiko_id) byIiko[String(i.iiko_id).trim()] = i; byName[i.name.trim().toLowerCase()] = i; });
+  const plan = { add: [], upd: [], hide: [], errors: [], newCats: new Set(), seen: new Set(), same: 0 };
+  rows.forEach((row, idx) => {
+    const line = idx + 2, name = String(pick(row, HDR.name) ?? '').trim(), price = toPrice(pick(row, HDR.price));
+    if (!name && String(pick(row, HDR.price) ?? '') === '') return; // пустая строка
+    if (!name) return plan.errors.push(`строка ${line}: нет названия`);
+    if (!(price >= 0)) {
+      const iikoE = String(pick(row, HDR.iiko) ?? '').trim(), ex = (iikoE && byIiko[iikoE]) || byName[name.toLowerCase()];
+      if (ex) plan.seen.add(ex.id); // блюдо есть в файле, просто строка с ошибкой: не скрываем его
+      return plan.errors.push(`строка ${line} («${name}»): цена не число`);
+    }
+    const catName = String(pick(row, HDR.cat) ?? '').trim(), iiko = String(pick(row, HDR.iiko) ?? '').trim();
+    const sortV = pick(row, HDR.sort), sort = sortV === undefined || sortV === '' ? undefined : Number(sortV), act = toBool(pick(row, HDR.active) ?? '');
+    if (catName && !catByName[catName.toLowerCase()]) plan.newCats.add(catName);
+    const cur = (iiko && byIiko[iiko]) || byName[name.toLowerCase()];
+    if (!cur) return plan.add.push({ name, price, catName, iiko, sort, active: act === undefined ? true : act });
+    plan.seen.add(cur.id);
+    const patch = {}, notes = [];
+    if (Number(cur.price) !== price) { patch.price = price; notes.push(`цена ${fmt(cur.price)} → ${fmt(price)}`); }
+    if (cur.name !== name) { patch.name = name; notes.push('название'); }
+    if (iiko && cur.iiko_id !== iiko) { patch.iiko_id = iiko; notes.push('iiko ID'); }
+    if (sort !== undefined && !Number.isNaN(sort) && cur.sort !== sort) { patch.sort = sort; }
+    const wantActive = act === undefined ? true : act;
+    if (cur.active !== wantActive) { patch.active = wantActive; notes.push(wantActive ? 'включится' : 'скроется'); }
+    const cc = catName && catByName[catName.toLowerCase()];
+    if (cc && cur.category_id !== cc.id) { patch.category_id = cc.id; notes.push('категория'); }
+    if (catName && !cc) { patch.catName = catName; notes.push('категория'); }
+    if (Object.keys(patch).length) plan.upd.push({ id: cur.id, name: cur.name, patch, notes }); else plan.same++;
+  });
+  if (hideMissing) items.forEach((i) => { if (i.active && !plan.seen.has(i.id)) plan.hide.push(i); });
+  return plan;
+}
+
+function excelCard() {
+  const x = S.xl;
+  const list = (title, arr, cls) => arr.length ? `<div><b class="${cls || ''}">${title} (${arr.length})</b><div class="muted" style="max-height:140px;overflow:auto;font-size:13px">${arr.slice(0, 60).map(esc).join('<br>')}${arr.length > 60 ? '<br>…' : ''}</div></div>` : '';
+  return `<div class="card"><b>Обновить меню из Excel</b>
+    <span class="muted">Запасной вариант, если выгрузка из iiko не сработала. Столбцы: <b>Категория, Название, Цена</b>, а также по желанию iiko ID, Порядок, Показывать (да/нет). Блюдо ищется по iiko ID, а если его нет — по названию. Удобнее всего скачать текущее меню, поправить цены и загрузить обратно.</span>
+    <div class="row"><button class="btn g" data-act="xlExport">Скачать текущее меню (Excel)</button><input type="file" accept=".xlsx,.xls,.csv" data-xl="1"></div>
+    ${x ? `<div class="msg">Файл: <b>${esc(x.fileName)}</b> · новых блюд: <b>${x.plan.add.length}</b> · изменится: <b>${x.plan.upd.length}</b> · без изменений: ${x.plan.same} · скроется: <b>${x.plan.hide.length}</b>${x.plan.newCats.size ? ' · новых категорий: <b>' + x.plan.newCats.size + '</b>' : ''}</div>
+      <label class="row"><input type="checkbox" data-act="xlHide" ${x.hide ? 'checked' : ''}> Скрыть блюда, которых нет в файле (меню на сегодня = то, что в файле)</label>
+      ${list('Ошибки, эти строки будут пропущены', x.plan.errors, 'red')}
+      ${list('Новые блюда', x.plan.add.map((a) => a.name + ' — ' + fmt(a.price)))}
+      ${list('Изменения', x.plan.upd.map((u) => u.name + ': ' + u.notes.join(', ')))}
+      ${list('Будут скрыты', x.plan.hide.map((h) => h.name))}
+      <div class="row"><button class="btn o" data-act="xlApply" ${x.plan.add.length + x.plan.upd.length + x.plan.hide.length ? '' : 'disabled'}>Применить</button><button class="btn g" data-act="xlCancel">Отмена</button></div>` : ''}</div>`;
+}
+
 function menuTab() {
   const { cats = [], items = [] } = S.d;
   const catOpts = Object.fromEntries([['', '— без категории —'], ...cats.map((c) => [c.id, c.name])]);
   return `<div class="row"><h1>Меню</h1><span class="spacer"></span><button class="btn g" data-act="newCat">+ Категория</button><button class="btn" data-act="newItem">+ Блюдо</button></div>
+  ${excelCard()}
   <div class="card scroll"><b>Категории</b><table><tr><th>Название</th><th>Цвет</th><th>Порядок</th><th>Показ</th><th></th></tr>
     ${cats.map((c) => `<tr><td><input type="text" data-t="categories" data-id="${c.id}" data-c="name" value="${esc(c.name)}"></td>
       <td><input type="text" data-t="categories" data-id="${c.id}" data-c="color" value="${esc(c.color)}" style="width:100px"></td>
@@ -298,7 +363,7 @@ function settingsTab() {
   return `<h1>Настройки</h1>
   <div class="card"><b>Связь с Telegram и iiko</b>
     <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
-    <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button></div>
+    <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button><button class="btn g" data-act="checkWebhook">Подключить кнопки Telegram</button></div>
     ${S.checkMsg ? `<pre class="link" style="white-space:pre-wrap">${esc(S.checkMsg)}</pre>` : ''}</div>
   <div class="card">${(S.d.settings || []).map((s) => `<label class="f">${esc(names[s.key] || s.key)}
     <input type="text" data-t="settings" data-key="${esc(s.key)}" value="${esc(s.value)}"></label>`).join('')}</div>`;
@@ -330,6 +395,37 @@ const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
   reload: () => loadTab(),
+  xlCancel: () => { S.xl = null; render(); },
+  xlHide: (el) => { S.xl.hide = el.checked; S.xl.plan = planImport(S.xl.rows, S.xl.hide); render(); },
+  xlExport: () => {
+    const cats = Object.fromEntries((S.d.cats || []).map((c) => [c.id, c.name]));
+    const aoa = [['Категория', 'Название', 'Цена', 'iiko ID', 'Порядок', 'Показывать'], ...(S.d.items || []).map((i) => [cats[i.category_id] || '', i.name, Number(i.price), i.iiko_id || '', i.sort, i.active ? 'да' : 'нет'])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 22 }, { wch: 38 }, { wch: 10 }, { wch: 38 }, { wch: 9 }, { wch: 11 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Меню'); XLSX.writeFile(wb, 'menu-' + ymd(new Date()) + '.xlsx');
+  },
+  xlApply: async () => {
+    const x = S.xl; if (!x) return; const plan = x.plan;
+    if (plan.hide.length && plan.hide.length >= (S.d.items || []).filter((i) => i.active).length && !ask('Будут скрыты ВСЕ активные блюда. Файл точно правильный?')) return;
+    // 1) категории
+    const catsNow = (await db.from('categories').select('*')).data || [], catId = Object.fromEntries(catsNow.map((c) => [c.name.trim().toLowerCase(), c.id]));
+    let n = catsNow.length;
+    for (const name of plan.newCats) { const r = await run(db.from('categories').insert({ name, color: COLORS[n % COLORS.length], sort: ++n }).select().single()); if (!r) return; catId[name.toLowerCase()] = r.id; }
+    // 2) обновления
+    for (const u of plan.upd) {
+      const patch = { ...u.patch }; if (patch.catName) { patch.category_id = catId[patch.catName.toLowerCase()]; delete patch.catName; }
+      patch.updated_at = new Date().toISOString();
+      if (!(await run(db.from('menu_items').update(patch).eq('id', u.id)))) return;
+    }
+    // 3) новые
+    if (plan.add.length) {
+      const rows = plan.add.map((a, i) => ({ name: a.name, price: a.price, category_id: a.catName ? catId[a.catName.toLowerCase()] : null, iiko_id: a.iiko || null, sort: a.sort ?? 1000 + i, active: a.active }));
+      if (!(await run(db.from('menu_items').insert(rows)))) return;
+    }
+    // 4) скрыть отсутствующие
+    if (plan.hide.length && !(await run(db.from('menu_items').update({ active: false }).in('id', plan.hide.map((h) => h.id))))) return;
+    S.xl = null; note(`Меню обновлено: новых ${plan.add.length}, изменено ${plan.upd.length}, скрыто ${plan.hide.length}`); await loadTab('menu');
+  },
+  checkWebhook: async () => { S.checkMsg = 'Подключаем…'; render(); const r = await api('/api/check', { what: 'telegram-webhook' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
   resend: async (el) => {
     el.disabled = true; el.textContent = 'Отправляем…';
     const r = await api('/api/send-order', { order_id: Number(el.dataset.id) });
@@ -386,6 +482,16 @@ document.addEventListener('input', (e) => { if (e.target.id === 'clientQ') { S.c
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if ((el.tagName === 'SELECT' || el.type === 'date') && el.dataset.act && A[el.dataset.act]) return A[el.dataset.act](el);
+  if (el.dataset.xl) {
+    const f = el.files[0]; if (!f) return;
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' }), ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      if (!rows.length) return note('В файле нет строк', true);
+      S.xl = { fileName: f.name, rows, hide: true }; S.xl.plan = planImport(rows, true); render();
+    } catch (err) { note('Не удалось прочитать файл: ' + err.message, true); }
+    return;
+  }
   if (el.dataset.up) { // загрузка скана сертификата
     const f = el.files[0]; if (!f) return;
     const path = el.dataset.up + '-' + Date.now() + '-' + f.name.replace(/[^\w.\-]+/g, '_');
