@@ -28,7 +28,7 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, clientFilter: '', nStop: 0, nSleep: 0 };
+const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, menuOnly: false, clientFilter: '', nStop: 0, nSleep: 0 };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
 async function api(path, body) {
@@ -65,11 +65,19 @@ async function loadTab(tab = S.tab) {
   if (tab === 'menu') {
     d.cats = (await db.from('categories').select('*').order('sort').order('id')).data || [];
     d.items = (await db.from('menu_items').select('*').order('sort').order('id')).data || [];
-    d.syncLast = ((await db.from('integration_settings').select('value').eq('key', 'iiko_menu_last').maybeSingle()).data || {}).value || null;
+    const cfgRows = (await db.from('integration_settings').select('key,value')).data || [];
+    d.cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
+    d.syncLast = d.cfg.iiko_menu_last || null;
+    if (!d.iikoLists) setTimeout(loadIikoLists, 0);
   }
   if (tab === 'certs') d.certs = (await db.from('certificates').select('*').order('sort').order('id')).data || [];
   if (tab === 'settings') d.settings = (await db.from('settings').select('*').order('key')).data || [];
   render();
+}
+async function loadIikoLists() {
+  const r = await api('/api/sync-menu', { action: 'list' });
+  S.d.iikoLists = r.ok ? { menus: r.menus || [], priceCategories: r.priceCategories || [] } : { error: r.error || 'нет ответа от сервера' };
+  if (S.tab === 'menu') render();
 }
 async function countNew() {
   const r = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = r.count || 0;
@@ -340,11 +348,22 @@ function planImport(rows, hideMissing) {
 }
 
 function iikoSyncCard() {
-  const l = S.d.syncLast;
+  const l = S.d.syncLast, cfg = S.d.cfg || {}, L = S.d.iikoLists;
+  const curMenu = String(cfg.iiko_external_menu_id || ''), curCat = String(cfg.iiko_price_category_id || ''), newD = cfg.iiko_new_dishes === 'show' ? 'show' : 'hide';
   const list = (title, arr) => arr && arr.length ? `<div><b>${title} (${arr.length})</b><div class="muted" style="max-height:120px;overflow:auto;font-size:13px">${arr.slice(0, 40).map(esc).join('<br>')}${arr.length > 40 ? '<br>…' : ''}</div></div>` : '';
+  const menuSel = L && L.menus && L.menus.length
+    ? `<select id="menuSel">${L.menus.some((m) => m.id === curMenu) ? '' : `<option value="${esc(curMenu)}" selected>${esc(curMenu || '— выберите —')}</option>`}${L.menus.map((m) => `<option value="${esc(m.id)}" ${m.id === curMenu ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>`
+    : `<input type="text" id="menuSel" value="${esc(curMenu)}" placeholder="код меню в iiko">`;
+  const catSel = `<select id="priceCatSel"><option value="">Базовые цены</option>${((L && L.priceCategories) || []).map((c) => `<option value="${esc(c.id)}" ${c.id === curCat ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`;
   return `<div class="card"><b>Меню из iiko</b>
-    <span class="muted">Цены и наличие блюд берутся из внешнего меню iiko. Обновляется только по кнопке: нажмите её после того, как выгрузили меню в iikoWeb. Новые блюда из iiko добавляются <b>скрытыми</b>: проверьте их и включите.</span>
-    <div class="row"><button class="btn o" data-act="syncMenu">Обновить меню из iiko сейчас</button>
+    <span class="muted">Выберите меню, которое вы выгрузили в iikoWeb на нужный день, и нажмите «Сохранить и обновить меню». Блюда, которых нет в этом меню, скроются, а новые из iiko добавятся скрытыми, чтобы вы их проверили.</span>
+    <div class="two">
+      <label class="f">Меню в iiko${menuSel}</label>
+      <label class="f">Категория цен${catSel}</label>
+      <label class="f">Новое блюдо из iiko<select id="newSel"><option value="hide" ${newD === 'hide' ? 'selected' : ''}>Скрывать, пока не проверю</option><option value="show" ${newD === 'show' ? 'selected' : ''}>Показывать сразу (если есть цена)</option></select></label>
+    </div>
+    ${!L ? '<span class="muted">Загружаем список меню из iiko…</span>' : L.error ? `<span class="red" style="font-size:13px">Список меню из iiko не загрузился (${esc(L.error)}). Можно ввести код меню вручную.</span>` : ''}
+    <div class="row"><button class="btn o" data-act="syncMenu">Сохранить и обновить меню</button>
       ${l ? `<span class="muted">Последнее обновление: ${fdt(l.at)} · блюд в iiko: ${l.total}</span>` : '<span class="muted">Ещё не обновлялось</span>'}</div>
     ${l ? list('Изменились цены', l.prices) + list('Скрыты (нет в меню iiko)', l.hidden) + list('Возвращены в меню', l.restored) + list('Новые, скрыты, ждут вашей проверки', l.added) + list('Без цены в iiko', l.noPrice) : ''}</div>`;
 }
@@ -364,28 +383,47 @@ function excelCard() {
       <div class="row"><button class="btn o" data-act="xlApply" ${x.plan.add.length + x.plan.upd.length + x.plan.hide.length ? '' : 'disabled'}>Применить</button><button class="btn g" data-act="xlCancel">Отмена</button></div>` : ''}</div>`;
 }
 
+function dishRow(i) {
+  const off = !i.active, noPrice = !(Number(i.price) > 0);
+  return `<div class="mrow" style="${off ? 'opacity:.6' : ''}">
+    <div class="mname">${esc(i.name)}${off && i.sync_hidden ? ' <span class="pill">нет в меню iiko</span>' : ''}${noPrice ? ' <span class="pill" style="background:#f6e3e4;color:#b53137">без цены</span>' : ''}</div>
+    <div class="mphoto">${i.image_url ? `<img src="${esc(i.image_url)}" alt="">` : ''}<label class="btn g sm">${i.image_url ? 'Фото' : '+ фото'}<input type="file" accept="image/*" data-dish-up="${i.id}" hidden></label></div>
+    <input type="number" min="0" class="mprice" data-t="menu_items" data-id="${i.id}" data-c="price" data-n="1" data-reload="1" value="${i.price}">
+    <label class="mhide"><input type="checkbox" data-t="menu_items" data-id="${i.id}" data-c="active" data-b="1" data-inv="1" data-reload="1" ${off ? 'checked' : ''}> Убрать с сайта</label></div>`;
+}
+
 function menuTab() {
   const { cats = [], items = [] } = S.d;
+  const real = items.filter((i) => i.iiko_id || i.active);
+  const shown = real.filter((i) => i.active).length, hidden = real.length - shown, noPrice = real.filter((i) => !(Number(i.price) > 0)).length;
+  const keep = (i) => !S.menuOnly || !i.active || !(Number(i.price) > 0);
+  const groups = cats.filter((c) => c.active).slice().sort((a, b) => a.sort - b.sort || a.id - b.id).map((c) => ({ c, rows: real.filter((i) => i.category_id === c.id && keep(i)) }));
+  const loose = real.filter((i) => !cats.some((c) => c.active && c.id === i.category_id) && keep(i));
   const catOpts = Object.fromEntries([['', '— без категории —'], ...cats.map((c) => [c.id, c.name])]);
-  return `<div class="row"><h1>Меню</h1><span class="spacer"></span><button class="btn g" data-act="newCat">+ Категория</button><button class="btn" data-act="newItem">+ Блюдо</button></div>
+  return `<div class="row"><h1>Меню</h1><span class="spacer"></span><button class="btn" data-act="newItem">+ Блюдо</button></div>
   ${iikoSyncCard()}
+  <div class="msg">На сайте: <b>${shown}</b> из ${real.length} · убрано: <b>${hidden}</b> · без цены: <b>${noPrice}</b></div>
+  <label class="row muted"><input type="checkbox" data-act="menuOnly" ${S.menuOnly ? 'checked' : ''}> Только убранные и без цены</label>
+  ${groups.filter((g) => g.rows.length).map((g) => `<div class="mcat"><div class="mhead"><i style="background:${esc(g.c.color)}"></i>${esc(g.c.name)}</div>${g.rows.map(dishRow).join('')}</div>`).join('')}
+  ${loose.length ? `<div class="mcat"><div class="mhead"><i style="background:#a8a2a0"></i>Без категории</div>${loose.map(dishRow).join('')}</div>` : ''}
+  <details class="card"><summary><b>Дополнительно</b> <span class="muted">категории, порядок блюд, iiko ID, импорт из Excel</span></summary>
+  <div style="display:grid;gap:14px;margin-top:12px">
+  <div class="row"><button class="btn g" data-act="newCat">+ Категория</button></div>
   ${excelCard()}
-  <div class="card scroll"><b>Категории</b><table><tr><th>Название</th><th>Цвет</th><th>Порядок</th><th>Показ</th><th></th></tr>
+  <div class="scroll"><b>Категории</b><table><tr><th>Название</th><th>Цвет</th><th>Порядок</th><th>Показ</th><th></th></tr>
     ${cats.map((c) => `<tr><td><input type="text" data-t="categories" data-id="${c.id}" data-c="name" value="${esc(c.name)}"></td>
       <td><input type="text" data-t="categories" data-id="${c.id}" data-c="color" value="${esc(c.color)}" style="width:100px"></td>
       <td><input type="number" data-t="categories" data-id="${c.id}" data-c="sort" data-n="1" value="${c.sort}" style="width:80px"></td>
       <td><input type="checkbox" data-t="categories" data-id="${c.id}" data-c="active" data-b="1" ${c.active ? 'checked' : ''}></td>
       <td><button class="btn d" data-act="delCat" data-id="${c.id}">×</button></td></tr>`).join('')}</table></div>
-  <div class="card scroll"><b>Блюда</b><table><tr><th>Категория</th><th>Название</th><th>Фото</th><th>Базовая цена</th><th>Порядок</th><th>Показ</th><th>iiko ID</th><th></th></tr>
+  <div class="scroll"><b>Все блюда</b><table><tr><th>Категория</th><th>Название</th><th>Порядок</th><th>Показ</th><th>iiko ID</th><th></th></tr>
     ${items.map((i) => `<tr><td>${sel(catOpts, i.category_id || '', `data-t="menu_items" data-id="${i.id}" data-c="category_id" data-nullable="1"`)}</td>
       <td><input type="text" data-t="menu_items" data-id="${i.id}" data-c="name" value="${esc(i.name)}"></td>
-      <td style="white-space:nowrap">${i.image_url ? `<img src="${esc(i.image_url)}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:8px;vertical-align:middle"> <button class="btn d" data-act="delPhoto" data-id="${i.id}" title="Убрать фото">×</button>` : ''}
-        <label class="btn g" style="cursor:pointer;display:inline-block">${i.image_url ? 'Заменить' : 'Фото'}<input type="file" accept="image/*" data-dish-up="${i.id}" hidden></label></td>
-      <td><input type="number" min="0" data-t="menu_items" data-id="${i.id}" data-c="price" data-n="1" value="${i.price}" style="width:100px"></td>
       <td><input type="number" data-t="menu_items" data-id="${i.id}" data-c="sort" data-n="1" value="${i.sort}" style="width:70px"></td>
       <td><input type="checkbox" data-t="menu_items" data-id="${i.id}" data-c="active" data-b="1" ${i.active ? 'checked' : ''}></td>
       <td><input type="text" data-t="menu_items" data-id="${i.id}" data-c="iiko_id" data-nullable="1" value="${esc(i.iiko_id || '')}" style="width:140px"></td>
-      <td><button class="btn d" data-act="delItem" data-id="${i.id}">×</button></td></tr>`).join('')}</table></div>`;
+      <td><button class="btn d" data-act="delItem" data-id="${i.id}">×</button>${i.image_url ? ` <button class="btn d" data-act="delPhoto" data-id="${i.id}" title="Убрать фото">фото ×</button>` : ''}</td></tr>`).join('')}</table></div>
+  </div></details>`;
 }
 
 function certsTab() {
@@ -448,9 +486,12 @@ const A = {
   },
   stopOff: async (el) => { if (await run(db.from('clients').update({ stop_list: false, stop_reason: null, stop_since: null }).eq('id', el.dataset.id), 'Снят со стоп-листа')) { await countNew(); await afterClientChange(el.dataset.id); } },
   wake: async (el) => { if (await run(db.from('clients').update({ woken_at: new Date().toISOString() }).eq('id', el.dataset.id), 'Ссылка снова работает')) { await countNew(); await afterClientChange(el.dataset.id); } },
+  menuOnly: (el) => { S.menuOnly = el.checked; render(); },
   syncMenu: async (el) => {
+    const body = {}; const m = val('menuSel'); if (m) body.menuId = m;
+    body.priceCategoryId = val('priceCatSel'); body.newDishes = val('newSel');
     el.disabled = true; el.textContent = 'Обновляем…';
-    const r = await api('/api/sync-menu', {});
+    const r = await api('/api/sync-menu', body);
     if (r.ok) note(`Меню обновлено: цен изменено ${r.prices.length}, скрыто ${r.hidden.length}, возвращено ${r.restored.length}, новых ${r.added.length}${r.photos ? ', фото ' + r.photos : ''}`);
     else note('Не удалось: ' + (r.error || 'ошибка'), true);
     await loadTab('menu');
@@ -579,10 +620,11 @@ document.addEventListener('change', async (e) => {
   if (el.dataset.pf) { await run(db.from('client_prices').update({ price: Number(el.value) }).eq('client_id', S.client.c.id).eq('item_id', el.dataset.pf), 'Цена сохранена'); return; }
   if (el.dataset.t === 'settings') { await run(db.from('settings').update({ value: el.value.trim() }).eq('key', el.dataset.key), 'Сохранено'); return; }
   if (el.dataset.t) {
-    let v = el.dataset.b ? el.checked : el.dataset.n ? Number(el.value) : el.value.trim();
+    let v = el.dataset.b ? (el.dataset.inv ? !el.checked : el.checked) : el.dataset.n ? Number(el.value) : el.value.trim();
     if (el.dataset.nullable && (v === '' || v === null)) v = null;
     if (el.dataset.c === 'name' && !v) return;
-    await run(db.from(el.dataset.t).update({ [el.dataset.c]: v }).eq('id', el.dataset.id), 'Сохранено');
+    const ok = await run(db.from(el.dataset.t).update({ [el.dataset.c]: v }).eq('id', el.dataset.id), 'Сохранено');
+    if (ok && el.dataset.reload) loadTab(S.tab);
   }
 });
 

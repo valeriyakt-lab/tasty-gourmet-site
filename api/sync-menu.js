@@ -58,7 +58,7 @@ async function syncMenu() {
 
   const items = (await sb('menu_items?select=id,name,price,active,iiko_id,sync_hidden,category_id,image_url&iiko_id=not.is.null')) || [];
   // защита: если iiko вернул пустое или подозрительно короткое меню, ничего не меняем
-  if (fromIiko.length < 5 || fromIiko.length < items.length * 0.5) throw new Error('Из iiko пришло ' + fromIiko.length + ' блюд (у нас ' + items.length + '): похоже на сбой, меню не изменено');
+  if (fromIiko.length < 5 || fromIiko.length < items.length * 0.2) throw new Error('Из iiko пришло ' + fromIiko.length + ' блюд (у нас ' + items.length + '): похоже на сбой, меню не изменено');
 
   const mine = Object.fromEntries(items.map((i) => [i.iiko_id, i]));
   const seen = new Set(), res = { prices: [], hidden: [], restored: [], added: [], noPrice: [], total: fromIiko.length };
@@ -102,16 +102,36 @@ async function syncMenu() {
   return res;
 }
 
+// Список внешних меню iiko (для выбора) и категорий цен
+async function listMenus() {
+  const l = await iiko('/api/2/menu', {});
+  const row = (x) => ({ id: String(x.id), name: String(x.name || x.id) });
+  return { menus: (l.externalMenus || []).map(row), priceCategories: (l.priceCategories || []).map(row) };
+}
+// Сохраняет выбор администратора: какое меню iiko использовать, категория цен, что делать с новыми блюдами
+async function saveChoice(b) {
+  const rows = [];
+  if (b.menuId !== undefined) rows.push({ key: 'iiko_external_menu_id', value: String(b.menuId).trim() });
+  if (b.priceCategoryId !== undefined) rows.push({ key: 'iiko_price_category_id', value: String(b.priceCategoryId || '').trim() });
+  if (b.newDishes === 'hide' || b.newDishes === 'show') rows.push({ key: 'iiko_new_dishes', value: b.newDishes });
+  if (b.menuId !== undefined && !String(b.menuId).trim()) throw new Error('Выберите меню');
+  if (rows.length) await sb('integration_settings', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }))) });
+}
+
 module.exports = async (req, res) => {
   const cron = !!process.env.CRON_SECRET && req.headers.authorization === 'Bearer ' + process.env.CRON_SECRET;
   try {
     if (!cron && !(await adminFromRequest(req))) return res.status(401).json({ ok: false, error: 'unauthorized' });
     if (!iikoConfigured()) return res.status(400).json({ ok: false, error: 'iiko не настроен: добавьте IIKO_API_LOGIN в переменные окружения Vercel' });
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+    if (body.action === 'list') return res.status(200).json({ ok: true, ...(await listMenus()) });
+    if (!cron) await saveChoice(body);
     const r = await syncMenu();
     if (r.added.length) await telegram('🆕 В меню iiko появились новые блюда (добавлены скрытыми, проверьте в админке → Меню):\n' + r.added.slice(0, 30).join('\n'));
     return res.status(200).json({ ok: true, ...r });
   } catch (e) {
-    await telegram('⚠️ Не удалось обновить меню из iiko: ' + e.message);
+    const isList = req.body && (req.body.action === 'list' || (typeof req.body === 'string' && req.body.includes('"list"')));
+    if (!isList) await telegram('⚠️ Не удалось обновить меню из iiko: ' + e.message);
     return res.status(200).json({ ok: false, error: e.message });
   }
 };
