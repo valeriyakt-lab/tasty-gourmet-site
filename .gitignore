@@ -1,0 +1,7 @@
+# Секреты — никогда не коммитим
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
