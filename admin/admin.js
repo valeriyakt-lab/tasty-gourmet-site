@@ -28,9 +28,17 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0 };
+const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '' };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
+async function api(path, body) {
+  const { data } = await db.auth.getSession();
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (data.session ? data.session.access_token : '') }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    return { status: r.status, ...j };
+  } catch (e) { return { ok: false, error: 'Нет связи с сервером: ' + e.message }; }
+}
 async function run(p, okMsg) { const { data, error } = await p; if (error) { note(error.message, true); return null; } if (okMsg) note(okMsg); return data === null ? true : data; }
 
 /* ---------- загрузка ---------- */
@@ -147,6 +155,7 @@ function dashboardTab() {
   const tbl = (head, rows) => `<details class="tv-t"><summary>Таблица значений</summary><table><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></details>`;
   return `<div class="row"><h1>Дашборд</h1><span class="spacer"></span><button class="btn g" data-act="reload">Обновить</button></div>
   ${rangeBar()}
+  ${(() => { const bad = dd.cur.filter((o) => o.status === 'failed').length; return bad ? `<div class="msg err">Не дошли до кассы: <b>${bad}</b>. <a href="#" data-act="toFailed">Открыть и отправить заново</a></div>` : ''; })()}
   <div class="tiles">
     ${tile('Выручка за период', fmt(m.rev), delta(m.rev, m.pRev), true)}
     ${tile('Заказов', m.n, delta(m.n, m.pN))}
@@ -174,13 +183,14 @@ function ordersTab() {
     ${sel(clientOpts, S.orderClient, 'data-act="orderClientFilter"')}${sel({ '': 'Все статусы', ...STATUSES }, S.statusFilter, 'data-act="filter"')}<button class="btn g" data-act="reload">Обновить</button></div>
     ${rangeBar()}
     <div class="msg">Период: ${periodLabel()} · заказов: <b>${rows.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(rows))}</b></div>
-    ${rows.length ? rows.map((o) => `<div class="card">
+    ${rows.length ? rows.map((o) => `<div class="card" style="${o.status === 'failed' ? 'box-shadow:inset 0 0 0 2px #b53137' : ''}">
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><b>${esc(o.clients ? o.clients.name : '')}</b><span class="spacer"></span><b class="geo">${fmt(o.total)}</b></div>
       <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}${o.comment ? ' · «' + esc(o.comment) + '»' : ''}</div>
       <div>${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
       ${o.iiko_error ? `<div class="red">iiko: ${esc(o.iiko_error)}</div>` : ''}
       <div class="row">${sel(STATUSES, o.status, `data-act="orderStatus" data-id="${o.id}"`)}
-        <span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span><span class="spacer"></span>
+        <span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span>
+        ${!o.iiko_order_id && o.status !== 'cancelled' ? `<button class="btn o" data-act="resend" data-id="${o.id}">${o.status === 'failed' || o.iiko_error ? 'Отправить в iiko заново' : 'Отправить в iiko'}</button>` : ''}<span class="spacer"></span>
         <button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">За выбранный период заказов нет</div>'}`;
 }
 
@@ -285,7 +295,12 @@ function certsTab() {
 
 function settingsTab() {
   const names = { min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
-  return `<h1>Настройки</h1><div class="card">${(S.d.settings || []).map((s) => `<label class="f">${esc(names[s.key] || s.key)}
+  return `<h1>Настройки</h1>
+  <div class="card"><b>Связь с Telegram и iiko</b>
+    <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
+    <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button></div>
+    ${S.checkMsg ? `<pre class="link" style="white-space:pre-wrap">${esc(S.checkMsg)}</pre>` : ''}</div>
+  <div class="card">${(S.d.settings || []).map((s) => `<label class="f">${esc(names[s.key] || s.key)}
     <input type="text" data-t="settings" data-key="${esc(s.key)}" value="${esc(s.value)}"></label>`).join('')}</div>`;
 }
 
@@ -315,6 +330,15 @@ const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
   reload: () => loadTab(),
+  resend: async (el) => {
+    el.disabled = true; el.textContent = 'Отправляем…';
+    const r = await api('/api/send-order', { order_id: Number(el.dataset.id) });
+    if (r.ok) note(r.already ? 'Заказ уже был передан в iiko' : 'Заказ передан в iiko'); else note('Не удалось: ' + (r.error || 'ошибка') + (r.telegram && r.telegram.sent ? ' (уведомление отправлено в Telegram)' : ''), true);
+    await loadTab('orders');
+  },
+  toFailed: async () => { S.tab = 'orders'; S.statusFilter = 'failed'; await loadTab('orders'); },
+  checkTg: async () => { S.checkMsg = 'Проверяем…'; render(); const r = await api('/api/check', { what: 'telegram' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
+  checkIiko: async () => { S.checkMsg = 'Проверяем…'; render(); const r = await api('/api/check', { what: 'iiko' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
   preset: async (el) => { [S.from, S.to] = presetRange(el.dataset.v); await reloadRange(); },
   from: async (el) => { if (!el.value) return; S.from = el.value; if (S.to < S.from) S.to = S.from; await reloadRange(); },
   to: async (el) => { if (!el.value) return; S.to = el.value; if (S.from > S.to) S.from = S.to; await reloadRange(); },
@@ -352,7 +376,7 @@ const A = {
 async function reloadRange() { if (S.tab === 'clients' && S.client) { await loadClientOrders(); render(); } else await loadTab(S.tab === 'dashboard' ? 'dashboard' : 'orders'); }
 async function openClientTab(id) { S.tab = 'clients'; if (!S.d.clients) await loadTab('clients'); await openClient(id); }
 
-document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (el && el.tagName !== 'SELECT' && el.type !== 'date' && A[el.dataset.act]) A[el.dataset.act](el); });
+document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (el && el.tagName !== 'SELECT' && el.type !== 'date' && A[el.dataset.act]) { if (el.tagName === 'A') e.preventDefault(); A[el.dataset.act](el); } });
 document.addEventListener('submit', async (e) => {
   if (e.target.id !== 'loginForm') return; e.preventDefault();
   const { error } = await db.auth.signInWithPassword({ email: val('em'), password: val('pw') });
