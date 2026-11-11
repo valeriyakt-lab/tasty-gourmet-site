@@ -28,7 +28,7 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '' };
+const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, clientFilter: '', nStop: 0, nSleep: 0 };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
 async function api(path, body) {
@@ -61,7 +61,7 @@ async function loadTab(tab = S.tab) {
   }
   if (tab === 'feedback') d.feedback = (await db.from('feedback').select('*, clients(name)').order('created_at', { ascending: false }).limit(300)).data || [];
   if (tab === 'requests') d.requests = (await db.from('registration_requests').select('*').order('created_at', { ascending: false }).limit(100)).data || [];
-  if (tab === 'clients') d.clients = (await db.from('clients').select('*').order('name')).data || [];
+  if (tab === 'clients') d.clients = (await db.from('client_overview').select('*').order('name')).data || [];
   if (tab === 'menu') {
     d.cats = (await db.from('categories').select('*').order('sort').order('id')).data || [];
     d.items = (await db.from('menu_items').select('*').order('sort').order('id')).data || [];
@@ -73,6 +73,8 @@ async function loadTab(tab = S.tab) {
 async function countNew() {
   const r = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = r.count || 0;
   const f = await db.from('feedback').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newFb = f.count || 0;
+  const st = await db.from('client_overview').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('stop_list', true); S.nStop = st.count || 0;
+  const sl = await db.from('client_overview').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('sleeping', true); S.nSleep = sl.count || 0;
 }
 async function loadClientOrders() {
   if (!S.client) return;
@@ -81,7 +83,7 @@ async function loadClientOrders() {
 }
 async function openClient(id) {
   const [c, a, p, items] = await Promise.all([
-    db.from('clients').select('*').eq('id', id).single(),
+    db.from('client_overview').select('*').eq('id', id).single(),
     db.from('client_addresses').select('*').eq('client_id', id).order('id'),
     db.from('client_prices').select('item_id, price').eq('client_id', id),
     db.from('menu_items').select('id,name,price').order('name'),
@@ -156,6 +158,7 @@ function dashboardTab() {
   return `<div class="row"><h1>Дашборд</h1><span class="spacer"></span><button class="btn g" data-act="reload">Обновить</button></div>
   ${rangeBar()}
   ${(() => { const bad = dd.cur.filter((o) => o.status === 'failed').length; return bad ? `<div class="msg err">Не дошли до кассы: <b>${bad}</b>. <a href="#" data-act="toFailed">Открыть и отправить заново</a></div>` : ''; })()}
+  ${S.nStop || S.nSleep ? `<div class="msg" style="background:#fdf3dc;color:#6b4d0a">В стоп-листе: <b>${S.nStop}</b> · ссылка спит: <b>${S.nSleep}</b> · <a href="#" data-act="goClients" data-v="${S.nStop ? 'stop' : 'sleep'}">открыть</a>${S.nStop && S.nSleep ? ' · <a href="#" data-act="goClients" data-v="sleep">показать спящих</a>' : ''}</div>` : ''}
   <div class="tiles">
     ${tile('Выручка за период', fmt(m.rev), delta(m.rev, m.pRev), true)}
     ${tile('Заказов', m.n, delta(m.n, m.pN))}
@@ -205,15 +208,34 @@ function requestsTab() {
   </div>`).join('') : '<div class="card muted">Заявок нет</div>'}`;
 }
 
+function statusPills(c) {
+  const p = [];
+  if (c.status !== 'active') p.push('<span class="pill" style="background:#f6e3e4;color:#b53137">заблокирован</span>');
+  else {
+    if (c.stop_list) p.push(`<span class="pill" style="background:#f6e3e4;color:#b53137" title="${esc(c.stop_reason || '')}">стоп-лист${c.stop_reason ? ': ' + esc(c.stop_reason) : ''}</span>`);
+    if (c.sleeping) p.push('<span class="pill" style="background:#fdf3dc;color:#8a6410">ссылка спит</span>');
+    if (!p.length) p.push('<span class="pill" style="background:#e7f2eb;color:#006a2e">активен</span>');
+  }
+  return p.join(' ');
+}
+
 function clientsTab() {
   if (S.client) return clientDetail();
   const q = S.clientQ.toLowerCase();
-  const rows = (S.d.clients || []).filter((c) => !q || (c.name + ' ' + (c.phone || '')).toLowerCase().includes(q));
+  const F = S.clientFilter, all = S.d.clients || [];
+  const rows = all.filter((c) => (!q || (c.name + ' ' + (c.phone || '')).toLowerCase().includes(q)) &&
+    (!F || (F === 'stop' && c.stop_list) || (F === 'sleep' && c.sleeping && c.status === 'active') || (F === 'blocked' && c.status !== 'active')));
+  const cnt = { stop: all.filter((c) => c.stop_list).length, sleep: all.filter((c) => c.sleeping && c.status === 'active').length, blocked: all.filter((c) => c.status !== 'active').length };
   return `<div class="row"><h1>Клиенты</h1><span class="spacer"></span>
+    <select data-act="clientFilter"><option value="">Все (${all.length})</option><option value="stop" ${F === 'stop' ? 'selected' : ''}>Стоп-лист (${cnt.stop})</option><option value="sleep" ${F === 'sleep' ? 'selected' : ''}>Ссылка спит (${cnt.sleep})</option><option value="blocked" ${F === 'blocked' ? 'selected' : ''}>Заблокированные (${cnt.blocked})</option></select>
     <input class="inp" type="text" id="clientQ" placeholder="Поиск" value="${esc(S.clientQ)}"><button class="btn" data-act="newClient">+ Клиент</button></div>
-    <div class="card scroll"><table><tr><th>Название</th><th>Телефон</th><th>Статус</th><th></th></tr>
-    ${rows.map((c) => `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.phone || '')}</td><td>${c.status === 'active' ? 'активен' : '<span class="red">заблокирован</span>'}</td>
-      <td style="text-align:right"><button class="btn g" data-act="openClient" data-id="${c.id}">Открыть</button></td></tr>`).join('')}</table>
+    <div class="card scroll"><table><tr><th>Название</th><th>Телефон</th><th>Последний заказ</th><th>Статус</th><th></th></tr>
+    ${rows.map((c) => `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.phone || '')}</td><td class="muted">${c.last_order_at ? fdt(c.last_order_at) : 'нет заказов'}</td><td>${statusPills(c)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${c.status === 'active' ? (c.stop_list ? `<button class="btn g" data-act="stopOff" data-id="${c.id}">Снять стоп</button>` : `<button class="btn d" data-act="stopOn" data-id="${c.id}">В стоп-лист</button>`) : ''}
+        ${c.sleeping && c.status === 'active' ? `<button class="btn o" data-act="wake" data-id="${c.id}">Разбудить</button>` : ''}
+        <button class="btn g" data-act="openClient" data-id="${c.id}">Открыть</button></td></tr>`).join('')}</table>
+    ${rows.length ? '' : '<div class="muted">Никого нет</div>'}
     ${rows.length ? '' : '<div class="muted">Клиентов нет</div>'}</div>`;
 }
 
@@ -229,6 +251,13 @@ function clientDetail() {
       <label class="f">Контактное лицо<input type="text" data-cf="contact_person" value="${esc(c.contact_person || '')}"></label>
       <label class="f">Статус${sel({ active: 'Активен', blocked: 'Заблокирован' }, c.status, 'data-cf="status"')}</label>
     </div>
+    <div class="card"><b>Доступ</b>
+      <div>${statusPills(c)}</div>
+      <div class="muted">Последний заказ: ${c.last_order_at ? fdt(c.last_order_at) : 'нет заказов'}</div>
+      <label class="f">Причина стоп-листа (видна только вам)<input type="text" data-cf="stop_reason" value="${esc(c.stop_reason || '')}" placeholder="например: задолженность"></label>
+      <div class="row">${c.stop_list ? `<button class="btn g" data-act="stopOff" data-id="${c.id}">Снять со стоп-листа</button>` : `<button class="btn d" data-act="stopOn" data-id="${c.id}">В стоп-лист</button>`}
+        ${c.sleeping ? `<button class="btn o" data-act="wake" data-id="${c.id}">Разбудить ссылку</button>` : ''}</div>
+      <span class="muted">Стоп-лист: клиент видит сайт, но не может отправить заявку. «Спит»: ссылка не открывает меню, пока вы не разбудите её.</span></div>
     <div class="card"><b>Личная ссылка для входа</b>
       <div class="link" id="lnk">${esc(linkFor(c.access_token))}</div>
       <div class="row"><button class="btn" data-act="copyLink">Скопировать</button><button class="btn d" data-act="regen">Выдать новую (старая перестанет работать)</button></div></div>
@@ -260,10 +289,75 @@ function feedbackTab() {
       <span class="spacer"></span><button class="btn d" data-act="fbDel" data-id="${f.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">Пока ничего нет</div>'}`;
 }
 
+/* ---------- меню из Excel ---------- */
+const HDR = { cat: ['категория', 'category', 'группа'], name: ['название', 'блюдо', 'наименование', 'name'], price: ['цена', 'price', 'стоимость'], iiko: ['iiko id', 'iiko_id', 'iiko', 'код iiko', 'код'], sort: ['порядок', 'sort', 'сортировка'], active: ['показывать', 'активно', 'в меню', 'active'] };
+const cleanKey = (k) => String(k).trim().toLowerCase().replace(/\s+/g, ' ');
+const pick = (row, names) => { for (const k of Object.keys(row)) if (names.includes(cleanKey(k))) return row[k]; return undefined; };
+const toPrice = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+  const t = String(v).replace(/[\s\u00a0]|тг|₸/gi, '').replace(',', '.');
+  return /^\d+(\.\d+)?$/.test(t) ? Number(t) : NaN; // пустое или с буквами — ошибка, а не 0
+};
+const toBool = (v) => { const t = String(v).trim().toLowerCase(); if (t === '') return undefined; return !['нет', 'no', 'false', '0', 'н', '-'].includes(t); };
+const COLORS = ['#008037', '#e0641c', '#b53137', '#e9ae2e', '#1d4f91', '#6e696a'];
+
+function planImport(rows, hideMissing) {
+  const items = S.d.items || [], cats = S.d.cats || [];
+  const catByName = Object.fromEntries(cats.map((c) => [c.name.trim().toLowerCase(), c]));
+  const byIiko = {}, byName = {};
+  items.forEach((i) => { if (i.iiko_id) byIiko[String(i.iiko_id).trim()] = i; byName[i.name.trim().toLowerCase()] = i; });
+  const plan = { add: [], upd: [], hide: [], errors: [], newCats: new Set(), seen: new Set(), same: 0 };
+  rows.forEach((row, idx) => {
+    const line = idx + 2, name = String(pick(row, HDR.name) ?? '').trim(), price = toPrice(pick(row, HDR.price));
+    if (!name && String(pick(row, HDR.price) ?? '') === '') return; // пустая строка
+    if (!name) return plan.errors.push(`строка ${line}: нет названия`);
+    if (!(price >= 0)) {
+      const iikoE = String(pick(row, HDR.iiko) ?? '').trim(), ex = (iikoE && byIiko[iikoE]) || byName[name.toLowerCase()];
+      if (ex) plan.seen.add(ex.id); // блюдо есть в файле, просто строка с ошибкой: не скрываем его
+      return plan.errors.push(`строка ${line} («${name}»): цена не число`);
+    }
+    const catName = String(pick(row, HDR.cat) ?? '').trim(), iiko = String(pick(row, HDR.iiko) ?? '').trim();
+    const sortV = pick(row, HDR.sort), sort = sortV === undefined || sortV === '' ? undefined : Number(sortV), act = toBool(pick(row, HDR.active) ?? '');
+    if (catName && !catByName[catName.toLowerCase()]) plan.newCats.add(catName);
+    const cur = (iiko && byIiko[iiko]) || byName[name.toLowerCase()];
+    if (!cur) return plan.add.push({ name, price, catName, iiko, sort, active: act === undefined ? true : act });
+    plan.seen.add(cur.id);
+    const patch = {}, notes = [];
+    if (Number(cur.price) !== price) { patch.price = price; notes.push(`цена ${fmt(cur.price)} → ${fmt(price)}`); }
+    if (cur.name !== name) { patch.name = name; notes.push('название'); }
+    if (iiko && cur.iiko_id !== iiko) { patch.iiko_id = iiko; notes.push('iiko ID'); }
+    if (sort !== undefined && !Number.isNaN(sort) && cur.sort !== sort) { patch.sort = sort; }
+    const wantActive = act === undefined ? true : act;
+    if (cur.active !== wantActive) { patch.active = wantActive; notes.push(wantActive ? 'включится' : 'скроется'); }
+    const cc = catName && catByName[catName.toLowerCase()];
+    if (cc && cur.category_id !== cc.id) { patch.category_id = cc.id; notes.push('категория'); }
+    if (catName && !cc) { patch.catName = catName; notes.push('категория'); }
+    if (Object.keys(patch).length) plan.upd.push({ id: cur.id, name: cur.name, patch, notes }); else plan.same++;
+  });
+  if (hideMissing) items.forEach((i) => { if (i.active && !plan.seen.has(i.id)) plan.hide.push(i); });
+  return plan;
+}
+
+function excelCard() {
+  const x = S.xl;
+  const list = (title, arr, cls) => arr.length ? `<div><b class="${cls || ''}">${title} (${arr.length})</b><div class="muted" style="max-height:140px;overflow:auto;font-size:13px">${arr.slice(0, 60).map(esc).join('<br>')}${arr.length > 60 ? '<br>…' : ''}</div></div>` : '';
+  return `<div class="card"><b>Обновить меню из Excel</b>
+    <span class="muted">Запасной вариант, если выгрузка из iiko не сработала. Столбцы: <b>Категория, Название, Цена</b>, а также по желанию iiko ID, Порядок, Показывать (да/нет). Блюдо ищется по iiko ID, а если его нет — по названию. Удобнее всего скачать текущее меню, поправить цены и загрузить обратно.</span>
+    <div class="row"><button class="btn g" data-act="xlExport">Скачать текущее меню (Excel)</button><input type="file" accept=".xlsx,.xls,.csv" data-xl="1"></div>
+    ${x ? `<div class="msg">Файл: <b>${esc(x.fileName)}</b> · новых блюд: <b>${x.plan.add.length}</b> · изменится: <b>${x.plan.upd.length}</b> · без изменений: ${x.plan.same} · скроется: <b>${x.plan.hide.length}</b>${x.plan.newCats.size ? ' · новых категорий: <b>' + x.plan.newCats.size + '</b>' : ''}</div>
+      <label class="row"><input type="checkbox" data-act="xlHide" ${x.hide ? 'checked' : ''}> Скрыть блюда, которых нет в файле (меню на сегодня = то, что в файле)</label>
+      ${list('Ошибки, эти строки будут пропущены', x.plan.errors, 'red')}
+      ${list('Новые блюда', x.plan.add.map((a) => a.name + ' — ' + fmt(a.price)))}
+      ${list('Изменения', x.plan.upd.map((u) => u.name + ': ' + u.notes.join(', ')))}
+      ${list('Будут скрыты', x.plan.hide.map((h) => h.name))}
+      <div class="row"><button class="btn o" data-act="xlApply" ${x.plan.add.length + x.plan.upd.length + x.plan.hide.length ? '' : 'disabled'}>Применить</button><button class="btn g" data-act="xlCancel">Отмена</button></div>` : ''}</div>`;
+}
+
 function menuTab() {
   const { cats = [], items = [] } = S.d;
   const catOpts = Object.fromEntries([['', '— без категории —'], ...cats.map((c) => [c.id, c.name])]);
   return `<div class="row"><h1>Меню</h1><span class="spacer"></span><button class="btn g" data-act="newCat">+ Категория</button><button class="btn" data-act="newItem">+ Блюдо</button></div>
+  ${excelCard()}
   <div class="card scroll"><b>Категории</b><table><tr><th>Название</th><th>Цвет</th><th>Порядок</th><th>Показ</th><th></th></tr>
     ${cats.map((c) => `<tr><td><input type="text" data-t="categories" data-id="${c.id}" data-c="name" value="${esc(c.name)}"></td>
       <td><input type="text" data-t="categories" data-id="${c.id}" data-c="color" value="${esc(c.color)}" style="width:100px"></td>
@@ -294,11 +388,11 @@ function certsTab() {
 }
 
 function settingsTab() {
-  const names = { min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
+  const names = { sleep_days: 'Через сколько дней без заказов ссылка клиента «засыпает»', min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
   return `<h1>Настройки</h1>
   <div class="card"><b>Связь с Telegram и iiko</b>
     <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
-    <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button></div>
+    <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button><button class="btn g" data-act="checkWebhook">Подключить кнопки Telegram</button></div>
     ${S.checkMsg ? `<pre class="link" style="white-space:pre-wrap">${esc(S.checkMsg)}</pre>` : ''}</div>
   <div class="card">${(S.d.settings || []).map((s) => `<label class="f">${esc(names[s.key] || s.key)}
     <input type="text" data-t="settings" data-key="${esc(s.key)}" value="${esc(s.value)}"></label>`).join('')}</div>`;
@@ -330,6 +424,45 @@ const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
   reload: () => loadTab(),
+  clientFilter: (el) => { S.clientFilter = el.value; render(); },
+  goClients: async (el) => { S.tab = 'clients'; S.client = null; S.clientFilter = el.dataset.v; await loadTab('clients'); },
+  stopOn: async (el) => {
+    const reason = window.prompt('Причина (видна только вам), например: задолженность', ''); if (reason === null) return;
+    if (await run(db.from('clients').update({ stop_list: true, stop_reason: reason.trim() || null, stop_since: new Date().toISOString() }).eq('id', el.dataset.id), 'Клиент в стоп-листе: заявки отправить не сможет')) { await countNew(); await afterClientChange(el.dataset.id); }
+  },
+  stopOff: async (el) => { if (await run(db.from('clients').update({ stop_list: false, stop_reason: null, stop_since: null }).eq('id', el.dataset.id), 'Снят со стоп-листа')) { await countNew(); await afterClientChange(el.dataset.id); } },
+  wake: async (el) => { if (await run(db.from('clients').update({ woken_at: new Date().toISOString() }).eq('id', el.dataset.id), 'Ссылка снова работает')) { await countNew(); await afterClientChange(el.dataset.id); } },
+  xlCancel: () => { S.xl = null; render(); },
+  xlHide: (el) => { S.xl.hide = el.checked; S.xl.plan = planImport(S.xl.rows, S.xl.hide); render(); },
+  xlExport: () => {
+    const cats = Object.fromEntries((S.d.cats || []).map((c) => [c.id, c.name]));
+    const aoa = [['Категория', 'Название', 'Цена', 'iiko ID', 'Порядок', 'Показывать'], ...(S.d.items || []).map((i) => [cats[i.category_id] || '', i.name, Number(i.price), i.iiko_id || '', i.sort, i.active ? 'да' : 'нет'])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 22 }, { wch: 38 }, { wch: 10 }, { wch: 38 }, { wch: 9 }, { wch: 11 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Меню'); XLSX.writeFile(wb, 'menu-' + ymd(new Date()) + '.xlsx');
+  },
+  xlApply: async () => {
+    const x = S.xl; if (!x) return; const plan = x.plan;
+    if (plan.hide.length && plan.hide.length >= (S.d.items || []).filter((i) => i.active).length && !ask('Будут скрыты ВСЕ активные блюда. Файл точно правильный?')) return;
+    // 1) категории
+    const catsNow = (await db.from('categories').select('*')).data || [], catId = Object.fromEntries(catsNow.map((c) => [c.name.trim().toLowerCase(), c.id]));
+    let n = catsNow.length;
+    for (const name of plan.newCats) { const r = await run(db.from('categories').insert({ name, color: COLORS[n % COLORS.length], sort: ++n }).select().single()); if (!r) return; catId[name.toLowerCase()] = r.id; }
+    // 2) обновления
+    for (const u of plan.upd) {
+      const patch = { ...u.patch }; if (patch.catName) { patch.category_id = catId[patch.catName.toLowerCase()]; delete patch.catName; }
+      patch.updated_at = new Date().toISOString();
+      if (!(await run(db.from('menu_items').update(patch).eq('id', u.id)))) return;
+    }
+    // 3) новые
+    if (plan.add.length) {
+      const rows = plan.add.map((a, i) => ({ name: a.name, price: a.price, category_id: a.catName ? catId[a.catName.toLowerCase()] : null, iiko_id: a.iiko || null, sort: a.sort ?? 1000 + i, active: a.active }));
+      if (!(await run(db.from('menu_items').insert(rows)))) return;
+    }
+    // 4) скрыть отсутствующие
+    if (plan.hide.length && !(await run(db.from('menu_items').update({ active: false }).in('id', plan.hide.map((h) => h.id))))) return;
+    S.xl = null; note(`Меню обновлено: новых ${plan.add.length}, изменено ${plan.upd.length}, скрыто ${plan.hide.length}`); await loadTab('menu');
+  },
+  checkWebhook: async () => { S.checkMsg = 'Подключаем…'; render(); const r = await api('/api/check', { what: 'telegram-webhook' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
   resend: async (el) => {
     el.disabled = true; el.textContent = 'Отправляем…';
     const r = await api('/api/send-order', { order_id: Number(el.dataset.id) });
@@ -373,6 +506,7 @@ const A = {
   newCert: async () => { if (await run(db.from('certificates').insert({ title: 'Новый сертификат', active: false, sort: (S.d.certs || []).length + 1 }))) loadTab('certs'); },
   delCert: async (el) => { if (ask('Удалить сертификат?') && await run(db.from('certificates').delete().eq('id', el.dataset.id))) loadTab('certs'); },
 };
+async function afterClientChange(id) { await loadTab('clients'); if (S.client && String(S.client.c.id) === String(id)) await openClient(id); }
 async function reloadRange() { if (S.tab === 'clients' && S.client) { await loadClientOrders(); render(); } else await loadTab(S.tab === 'dashboard' ? 'dashboard' : 'orders'); }
 async function openClientTab(id) { S.tab = 'clients'; if (!S.d.clients) await loadTab('clients'); await openClient(id); }
 
@@ -386,6 +520,16 @@ document.addEventListener('input', (e) => { if (e.target.id === 'clientQ') { S.c
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if ((el.tagName === 'SELECT' || el.type === 'date') && el.dataset.act && A[el.dataset.act]) return A[el.dataset.act](el);
+  if (el.dataset.xl) {
+    const f = el.files[0]; if (!f) return;
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' }), ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      if (!rows.length) return note('В файле нет строк', true);
+      S.xl = { fileName: f.name, rows, hide: true }; S.xl.plan = planImport(rows, true); render();
+    } catch (err) { note('Не удалось прочитать файл: ' + err.message, true); }
+    return;
+  }
   if (el.dataset.up) { // загрузка скана сертификата
     const f = el.files[0]; if (!f) return;
     const path = el.dataset.up + '-' + Date.now() + '-' + f.name.replace(/[^\w.\-]+/g, '_');
