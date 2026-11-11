@@ -17,7 +17,7 @@ header.bar{background:#fff;box-shadow:0 1px 0 #e3e0dc;position:sticky;top:0;z-in
 .spacer{flex:1}
 main{max-width:1200px;margin:0 auto;padding:20px 16px 60px;display:grid;gap:14px}
 h1{margin:0;font:700 22px Geologica,sans-serif;text-transform:uppercase}
-.card{background:#fff;border-radius:16px;padding:16px;display:grid;gap:10px}
+.card{background:#fff;border-radius:16px;padding:16px;display:grid;gap:10px;align-content:start}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .inp,input[type=text],input[type=email],input[type=password],input[type=number],select,textarea{border:1px solid #e3e0dc;background:#f4f3f0;border-radius:10px;padding:8px 10px;color:#393536;min-width:0}
 .inp.w{flex:1 1 200px}
@@ -38,3 +38,39 @@ td input[type=text],td input[type=number],td select{width:100%}
 .link{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all;background:#f4f3f0;border-radius:8px;padding:6px 8px}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
 label.f{display:grid;gap:4px;font-size:12px;color:#6e696a;font-weight:500}
+
+/* дашборд */
+.tiles{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px}
+.tile{background:#fff;border-radius:16px;padding:14px 16px;display:grid;gap:4px;align-content:start;text-align:left;border:0;font:inherit;color:inherit}
+.tile:first-child{grid-column:span 2}
+.link-tile:hover{background:#faf9f7}
+.tl{font-size:13px;color:#6e696a}
+.tv{font:600 26px/1.15 Geologica,sans-serif;font-variant-numeric:tabular-nums}
+.tv.big{font-size:48px;font-weight:700;color:#008037}
+.tv.warn{color:#c95614}
+.delta{font-size:12px}
+.chart{display:flex;gap:8px;padding-top:6px}
+.yax{display:flex;flex-direction:column;justify-content:space-between;height:200px;font-size:11px;color:#6e696a;text-align:right;min-width:42px;transform:translateY(-6px);padding-bottom:0}
+.plot{flex:1;min-width:0;position:relative}
+.grid{position:absolute;left:0;right:0;top:0;height:200px;display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}
+.grid i{border-top:1px solid #efece7;height:0}
+.cols{position:relative;display:flex;align-items:flex-end;gap:3px;height:200px}
+.col{flex:1;min-width:0;height:100%;display:flex;align-items:flex-end;justify-content:center;outline:0}
+.col .bar{width:100%;max-width:24px;background:#008037;border-radius:4px 4px 0 0;min-height:0;transition:filter .12s}
+.col:hover .bar,.col:focus-visible .bar{filter:brightness(1.25)}
+.xax{display:flex;gap:3px;margin-top:6px}
+.xax span{flex:1;min-width:0;font-size:11px;color:#6e696a;text-align:center;white-space:nowrap;overflow:visible}
+.hb{display:grid;gap:8px}
+.hr{display:grid;grid-template-columns:minmax(90px,38%) 1fr auto;gap:10px;align-items:center;outline:0;border-radius:8px;padding:2px 0}
+.hr:hover .ht i,.hr:focus-visible .ht i{filter:brightness(1.25)}
+.hl{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ht{height:14px;display:block}
+.ht i{display:block;height:100%;background:#008037;border-radius:0 4px 4px 0;min-width:2px;transition:filter .12s}
+.hv{font-size:12px;font-variant-numeric:tabular-nums;color:#393536;min-width:70px;text-align:right}
+.tv-t summary{cursor:pointer;color:#6e696a;font-size:13px;margin-top:4px}
+.tv-t table{margin-top:6px;font-size:13px}
+#tip{position:fixed;z-index:100;display:none;pointer-events:none;background:#fff;border:1px solid #e3e0dc;border-radius:10px;box-shadow:0 6px 20px rgba(57,53,54,.15);padding:8px 12px;max-width:260px}
+#tip .tv1{font:600 15px Geologica,sans-serif;color:#393536}
+#tip .tl1{font-size:12px;color:#6e696a}
+@media(max-width:1000px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile:first-child{grid-column:span 2}}
+@media(max-width:560px){.tv.big{font-size:38px}.yax{min-width:34px}.hr{grid-template-columns:minmax(70px,34%) 1fr auto}}
