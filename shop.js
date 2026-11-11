@@ -35,7 +35,7 @@ const S = {
   qty: {}, pend: {}, pickup: false, addr: '', q: '', active: 0, comment: '',
   cartOpen: false, sending: false, done: null, cartError: '',
   modal: null, draftName: '', repOrder: null, repAddr: '', newAddr: '',
-  openOrder: null,
+  openOrder: null, idem: null, cartNotice: '',
   fbKind: 'review', fbRating: 5, fbText: '', fbSent: false, fbError: '', fbSending: false,
 };
 
@@ -99,7 +99,7 @@ function eventView(ev, o) {
 function setQty(id, v) {
   v = Math.max(0, Math.min(999, Math.round(Number(String(v).replace(/\D/g, '')) || 0)));
   if (v) S.qty[id] = v; else delete S.qty[id];
-  S.cartError = '';
+  S.cartError = ''; S.idem = null;
 }
 function cartLines() {
   const items = allItems();
@@ -258,8 +258,8 @@ function modalView() {
     const o = S.repOrder, cant = S.repAddr === '__new' && !S.newAddr.trim();
     title = 'Повторить заказ № ' + o.number;
     body = `<p class="muted" style="margin:0;font-size:14px">Те же блюда и количество. Выберите, куда доставить:</p>
-      ${[...addrs, '__new'].map((a) => { const on = S.repAddr === a; const c = on ? '#008037' : '#e3e0dc';
-        return `<button class="pick" data-act="pickAddr" data-v="${esc(a)}" style="border-color:${c};background:${on ? '#f1f7f3' : '#fff'}"><i style="border-color:${c};background:${on ? '#008037' : '#fff'}"></i><span style="flex:1">${a === '__new' ? '+ Другой адрес' : esc(a)}</span>${o.address === a ? '<span class="muted" style="font-size:12px">был в заказе</span>' : ''}</button>`; }).join('')}
+      ${[...addrs, '__new'].map((a) => { const on = S.repAddr === a; const c = on ? '#008037' : '#e3e0dc'; const blocked = a !== '__new' && repeatBlocked(o, a);
+        return `<button class="pick" ${blocked ? 'disabled' : `data-act="pickAddr" data-v="${esc(a)}"`} style="border-color:${c};background:${on ? '#f1f7f3' : '#fff'};${blocked ? 'opacity:.5;cursor:default' : ''}"><i style="border-color:${c};background:${on ? '#008037' : '#fff'}"></i><span style="flex:1">${a === '__new' ? '+ Другой адрес' : esc(a)}</span>${blocked ? '<span class="muted" style="font-size:12px">уже заказано сегодня</span>' : o.address === a ? '<span class="muted" style="font-size:12px">был в заказе</span>' : ''}</button>`; }).join('')}
       ${S.repAddr === '__new' ? `<input class="inp" id="newAddr" value="${esc(S.newAddr)}" placeholder="ул. Абая 150, офис 3" aria-label="Новый адрес">` : ''}
       <button class="btn btn-orange" data-act="doRepeat" ${cant ? 'disabled' : ''} style="margin-top:4px">Добавить в корзину</button>`;
   } else if (S.modal === 'addr') {
@@ -294,6 +294,7 @@ function cartView() {
         <div class="stepper sm"><button class="m" data-act="dec" data-id="${l.id}" aria-label="Убрать">−</button>
           <input type="text" inputmode="numeric" value="${l.qty}" data-chg="qty" data-id="${l.id}" aria-label="Количество">
           <button class="p" data-act="inc" data-id="${l.id}" aria-label="Добавить">+</button></div></div>`).join('')}</div>
+      ${S.cartNotice ? `<div class="err" style="background:#fdf3dc;color:#8a6410">${esc(S.cartNotice)}</div>` : ''}
       <div class="box"><div class="muted" style="font-size:13px;font-weight:500">${S.pickup ? 'Получение' : 'Адрес доставки'}</div>
         <div style="font-weight:500">${esc(where)}</div>
         <textarea id="comment" rows="2" maxlength="500" placeholder="Комментарий: ориентир, время, пожелания" class="inp" style="font-size:15px;resize:vertical">${esc(S.comment)}</textarea></div></div>
@@ -355,6 +356,11 @@ function tokenFromText(t) {
 }
 const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
 
+// Меню меняется каждый день, поэтому повтор берёт сегодняшние блюда и цены.
+// Заказ, отправленный сегодня на этот адрес, повторять на тот же адрес нельзя, чтобы не было дубля.
+const isToday = (iso) => fdate(iso) === fdate(new Date().toISOString());
+const repeatBlocked = (o, addr) => isToday(o.created_at) && !['failed', 'cancelled'].includes(o.status) && !o.pickup && o.address === addr;
+
 const actions = {
   tab: (el) => { S.authTab = el.dataset.v; render(); },
   loginLink: () => { const t = tokenFromText(val('linkIn')); if (!t) { S.fatal = 'Не удалось распознать ссылку.'; render(); return; } S.token = t; store.set(TOKEN_KEY, t); load(); },
@@ -379,8 +385,8 @@ const actions = {
     catch (e) { S.fbError = e.code === 'too_many' ? 'Слишком много сообщений за час. Попробуйте позже.' : 'Не удалось отправить. Попробуйте ещё раз.'; }
     S.fbSending = false; render();
   },
-  setDelivery: () => { S.pickup = false; render(); },
-  setPickup: () => { S.pickup = true; render(); },
+  setDelivery: () => { S.pickup = false; S.idem = null; render(); },
+  setPickup: () => { S.pickup = true; S.idem = null; render(); },
   goCat: (el) => scrollToCat(Number(el.dataset.id)),
   inc: (el) => { const id = el.dataset.id; setQty(id, (S.qty[id] || 0) + 1); render(); },
   dec: (el) => { const id = el.dataset.id; setQty(id, (S.qty[id] || 0) - 1); render(); },
@@ -402,8 +408,8 @@ const actions = {
   toggleOrder: (el) => { const id = Number(el.dataset.id); S.openOrder = S.openOrder === id ? null : id; render(); },
   repeat: (el) => {
     const o = S.data.orders.find((x) => x.id === Number(el.dataset.id)); if (!o) return;
-    const other = S.data.addresses.find((a) => a !== o.address) || o.address || S.data.addresses[0] || '__new';
-    S.modal = 'repeat'; S.repOrder = o; S.repAddr = other; S.newAddr = ''; render();
+    const free = S.data.addresses.find((a) => !repeatBlocked(o, a));
+    S.modal = 'repeat'; S.repOrder = o; S.repAddr = free || '__new'; S.newAddr = ''; render();
   },
   pickAddr: (el) => { S.repAddr = el.dataset.v; render(); },
   doRepeat: async () => {
@@ -413,9 +419,10 @@ const actions = {
       addr = S.newAddr.trim(); if (!addr) return;
       try { await rpc('add_address', { p_token: S.token, p_address: addr }); await load(); } catch (e) { alert('Не удалось сохранить адрес.'); return; }
     }
-    const items = allItems(), nq = {};
-    o.items.forEach((i) => { if (items[i.item_id]) nq[i.item_id] = i.qty; });
-    S.qty = nq; S.addr = addr; S.pickup = false; S.modal = null; S.view = 'menu'; S.cartOpen = true; S.done = null; S.cartError = ''; render();
+    const items = allItems(), nq = {}, missing = [];
+    o.items.forEach((i) => { if (items[i.item_id]) nq[i.item_id] = i.qty; else missing.push(i.name); });
+    S.cartNotice = missing.length ? 'Этих блюд сегодня нет в меню, они не добавлены: ' + missing.join(', ') + '.' : '';
+    S.idem = null; S.qty = nq; S.addr = addr; S.pickup = false; S.modal = null; S.view = 'menu'; S.cartOpen = true; S.done = null; S.cartError = ''; render();
   },
   submit: async () => {
     const lines = cartLines(), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
@@ -423,13 +430,18 @@ const actions = {
     if (!S.pickup && sum < minDelivery()) return;
     S.comment = val('comment') || S.comment; S.sending = true; S.cartError = ''; render();
     try {
-      const r = await rpc('place_order', { p_token: S.token, p_items: lines.map((l) => ({ item_id: l.id, qty: l.qty })), p_pickup: S.pickup, p_address: S.pickup ? '' : S.addr, p_comment: S.comment });
+      if (!S.idem) S.idem = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+      const r = await rpc('place_order', { p_token: S.token, p_items: lines.map((l) => ({ item_id: l.id, qty: l.qty })), p_pickup: S.pickup, p_address: S.pickup ? '' : S.addr, p_comment: S.comment, p_key: S.idem });
       S.done = { number: r.number, where: S.pickup ? 'Самовывоз: ' + (settings().pickup_address || '') : 'Доставка: ' + S.addr };
-      S.qty = {}; S.comment = ''; S.sending = false;
+      S.qty = {}; S.comment = ''; S.sending = false; S.idem = null; S.cartNotice = '';
+      pushToKitchen(r.number);
       await load();
     } catch (e) {
       S.sending = false;
-      S.cartError = e.code === 'below_min' ? 'Сумма заказа ниже минимальной для доставки.'
+      const dup = /^duplicate:(.+)$/.exec(e.code || '');
+      if (dup) S.idem = null;
+      S.cartError = dup ? `Такая же заявка на этот адрес уже отправлена сегодня (№ ${dup[1]}). Измените состав или выберите другой адрес.`
+        : e.code === 'below_min' ? 'Сумма заказа ниже минимальной для доставки.'
         : e.code === 'unauthorized' ? 'Доступ закрыт. Обратитесь к менеджеру.' : 'Не удалось отправить заявку. Попробуйте ещё раз или позвоните менеджеру.';
       render();
     }
@@ -445,7 +457,7 @@ document.addEventListener('change', (e) => {
   const el = e.target, k = el.dataset && el.dataset.chg; if (!k) return;
   if (k === 'qty') { setQty(el.dataset.id, el.value || 1); render(); }
   else if (k === 'pend') { S.pend[el.dataset.id] = el.value.replace(/\D/g, '').slice(0, 3); }
-  else if (k === 'addr') { if (el.value === '__new') { S.modal = 'addr'; S.newAddr = ''; render(); } else { S.addr = el.value; render(); } }
+  else if (k === 'addr') { if (el.value === '__new') { S.modal = 'addr'; S.newAddr = ''; render(); } else { S.addr = el.value; S.idem = null; render(); } }
 });
 document.addEventListener('input', (e) => {
   const el = e.target;
@@ -467,6 +479,11 @@ window.addEventListener('scroll', () => {
     const col = S.data.menu[i].color, on = i === cur; c.style.background = on ? col : '#fff'; c.style.color = on ? '#fff' : col;
     const b = c.querySelector('b'); if (b) { b.style.background = on ? '#fff' : col; b.style.color = on ? col : '#fff'; } }); }
 }, { passive: true });
+
+/* передача заказа на кассу выполняется на сервере; ошибка не должна мешать клиенту */
+function pushToKitchen(number) {
+  try { fetch('/api/send-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token, number }), keepalive: true }).catch(() => {}); } catch (e) {}
+}
 
 /* ---------- старт ---------- */
 (function init() {

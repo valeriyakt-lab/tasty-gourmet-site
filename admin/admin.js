@@ -11,7 +11,7 @@ const linkFor = (token) => location.origin + '/?t=' + token;
 const newToken = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 const STATUSES = { new: 'Новая', accepted: 'Принята', cooking: 'Готовится', delivering: 'В пути', done: 'Выполнен', cancelled: 'Отменён', failed: 'Не передана' };
-const TABS = [['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
+const TABS = [['dashboard', 'Дашборд'], ['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
 const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const startISO = (s) => new Date(s + 'T00:00:00').toISOString();
@@ -28,9 +28,17 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'orders', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(new Date()), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0 };
+const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '' };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
+async function api(path, body) {
+  const { data } = await db.auth.getSession();
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (data.session ? data.session.access_token : '') }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    return { status: r.status, ...j };
+  } catch (e) { return { ok: false, error: 'Нет связи с сервером: ' + e.message }; }
+}
 async function run(p, okMsg) { const { data, error } = await p; if (error) { note(error.message, true); return null; } if (okMsg) note(okMsg); return data === null ? true : data; }
 
 /* ---------- загрузка ---------- */
@@ -41,6 +49,15 @@ async function loadTab(tab = S.tab) {
     if (S.orderClient) q = q.eq('client_id', S.orderClient);
     d.orders = (await q).data || [];
     if (!d.clients) d.clients = (await db.from('clients').select('*').order('name')).data || [];
+  }
+  if (tab === 'dashboard') {
+    const len = Math.round((new Date(S.to + 'T00:00:00') - new Date(S.from + 'T00:00:00')) / 864e5) + 1;
+    const pTo = ymd(addDays(new Date(S.from + 'T00:00:00'), -1)), pFrom = ymd(addDays(new Date(pTo + 'T00:00:00'), -(len - 1)));
+    const [cur, prev] = await Promise.all([
+      db.from('orders').select('id,created_at,status,total,client_id,clients(name),order_items(name,qty,price)').gte('created_at', startISO(S.from)).lt('created_at', endISO(S.to)).limit(5000),
+      db.from('orders').select('id,status,total,client_id').gte('created_at', startISO(pFrom)).lt('created_at', endISO(pTo)).limit(5000),
+    ]);
+    d.dash = { cur: cur.data || [], prev: prev.data || [], len, error: cur.error ? cur.error.message : null };
   }
   if (tab === 'feedback') d.feedback = (await db.from('feedback').select('*, clients(name)').order('created_at', { ascending: false }).limit(300)).data || [];
   if (tab === 'requests') d.requests = (await db.from('registration_requests').select('*').order('created_at', { ascending: false }).limit(100)).data || [];
@@ -85,6 +102,80 @@ function rangeBar() {
 }
 const periodLabel = () => (S.from === S.to ? S.from.split('-').reverse().join('.') : S.from.split('-').reverse().join('.') + ' — ' + S.to.split('-').reverse().join('.'));
 
+/* ---------- дашборд ---------- */
+const INK = '#393536', MUTED = '#6e696a', BAR = '#008037';
+const compact = (n) => n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0).replace('.0', '') + ' млн' : n >= 1e3 ? Math.round(n / 1e3) + ' тыс' : String(Math.round(n));
+const niceMax = (v) => { if (v <= 0) return 1; const e = Math.pow(10, Math.floor(Math.log10(v))), m = v / e; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * e; };
+const dm = (k) => k.split('-').reverse().slice(0, 2).join('.');
+function bucketKey(iso, weekly) {
+  const d = new Date(iso); if (weekly) d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d);
+}
+function dashData() {
+  const { cur, prev, len } = S.d.dash, ok = cur.filter(counted), pOk = prev.filter(counted);
+  const rev = ordersSum(ok), pRev = ordersSum(pOk);
+  const clients = new Set(ok.map((o) => o.client_id)).size, pClients = new Set(pOk.map((o) => o.client_id)).size;
+  const weekly = len > 45, days = {};
+  // непрерывная шкала дат без пропусков
+  for (let d = new Date(S.from + 'T00:00:00'); ymd(d) <= S.to; d.setDate(d.getDate() + 1)) days[bucketKey(d.toISOString(), weekly)] = { rev: 0, n: 0 };
+  ok.forEach((o) => { const b = days[bucketKey(o.created_at, weekly)]; if (b) { b.rev += Number(o.total); b.n += 1; } });
+  const dishes = {}, cl = {};
+  ok.forEach((o) => {
+    const c = cl[o.client_id] || (cl[o.client_id] = { name: o.clients ? o.clients.name : '—', rev: 0, n: 0 }); c.rev += Number(o.total); c.n += 1;
+    o.order_items.forEach((i) => { const x = dishes[i.name] || (dishes[i.name] = { name: i.name, rev: 0, n: 0 }); x.rev += i.qty * i.price; x.n += i.qty; });
+  });
+  const byStatus = {}; cur.forEach((o) => { byStatus[o.status] = (byStatus[o.status] || 0) + 1; });
+  return { rev, pRev, n: ok.length, pN: pOk.length, avg: ok.length ? rev / ok.length : 0, pAvg: pOk.length ? pRev / pOk.length : 0, clients, pClients, weekly,
+    days: Object.entries(days).sort(), dishes: Object.values(dishes).sort((a, b) => b.rev - a.rev).slice(0, 8), cl: Object.values(cl).sort((a, b) => b.rev - a.rev).slice(0, 8), byStatus };
+}
+function delta(cur, prev) {
+  if (!prev) return `<span class="delta" style="color:${MUTED}">нет данных за прошлый период</span>`;
+  const p = (cur - prev) / prev * 100, up = p > 0.05, down = p < -0.05;
+  const col = up ? '#006a2e' : down ? '#b53137' : MUTED;
+  return `<span class="delta" style="color:${col}">${up ? '▲' : down ? '▼' : '●'} ${up ? '+' : ''}${p.toFixed(1).replace('.', ',')}% <span style="color:${MUTED}">к прошлому периоду</span></span>`;
+}
+const tile = (label, value, d, big) => `<div class="tile"><div class="tl">${label}</div><div class="tv ${big ? 'big' : ''}">${value}</div>${d || ''}</div>`;
+
+function columnsChart(days, weekly) {
+  const max = niceMax(Math.max(...days.map(([, v]) => v.rev), 0)), ticks = [0, 1, 2, 3, 4].map((i) => max / 4 * i);
+  const step = Math.max(1, Math.ceil(days.length / 7));
+  return `<div class="chart"><div class="yax">${ticks.slice().reverse().map((t) => `<span>${compact(t)}</span>`).join('')}</div>
+    <div class="plot"><div class="grid">${ticks.map(() => '<i></i>').join('')}</div>
+    <div class="cols">${days.map(([k, v], idx) => `<div class="col" tabindex="0" data-tip="${esc((weekly ? 'Неделя с ' : '') + k.split('-').reverse().join('.'))}|${fmt(v.rev)}|${v.n} зак."><div class="bar" style="height:${v.rev / max * 100}%"></div></div>`).join('')}</div>
+    <div class="xax">${days.map(([k], idx) => `<span>${idx % step === 0 ? dm(k) : ''}</span>`).join('')}</div></div></div>`;
+}
+function hbars(rows, unit) {
+  const max = Math.max(...rows.map((r) => r.rev), 1);
+  return rows.length ? `<div class="hb">${rows.map((r) => `<div class="hr" tabindex="0" data-tip="${esc(r.name)}|${fmt(r.rev)}|${unit(r)}">
+    <span class="hl">${esc(r.name)}</span><span class="ht"><i style="width:${r.rev / max * 100}%"></i></span><span class="hv">${fmt(r.rev)}</span></div>`).join('')}</div>` : '<div class="muted">Нет данных за период</div>';
+}
+function dashboardTab() {
+  const dd = S.d.dash; if (!dd) return '<div class="boot">Загрузка…</div>';
+  if (dd.error) return `<div class="msg err">${esc(dd.error)}</div>`;
+  const m = dashData();
+  const tbl = (head, rows) => `<details class="tv-t"><summary>Таблица значений</summary><table><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></details>`;
+  return `<div class="row"><h1>Дашборд</h1><span class="spacer"></span><button class="btn g" data-act="reload">Обновить</button></div>
+  ${rangeBar()}
+  ${(() => { const bad = dd.cur.filter((o) => o.status === 'failed').length; return bad ? `<div class="msg err">Не дошли до кассы: <b>${bad}</b>. <a href="#" data-act="toFailed">Открыть и отправить заново</a></div>` : ''; })()}
+  <div class="tiles">
+    ${tile('Выручка за период', fmt(m.rev), delta(m.rev, m.pRev), true)}
+    ${tile('Заказов', m.n, delta(m.n, m.pN))}
+    ${tile('Средний чек', fmt(m.avg), delta(m.avg, m.pAvg))}
+    ${tile('Клиентов заказали', m.clients, delta(m.clients, m.pClients))}
+    <button class="tile link-tile" data-act="tab" data-v="requests"><div class="tl">Новые заявки</div><div class="tv ${S.newReq ? 'warn' : ''}">${S.newReq || 0}</div><span class="delta muted">перейти →</span></button>
+    <button class="tile link-tile" data-act="tab" data-v="feedback"><div class="tl">Новые отзывы</div><div class="tv ${S.newFb ? 'warn' : ''}">${S.newFb || 0}</div><span class="delta muted">перейти →</span></button>
+  </div>
+  <div class="card"><div class="row"><b>Выручка ${m.weekly ? 'по неделям' : 'по дням'}</b><span class="muted">${periodLabel()}, без отменённых</span></div>
+    ${m.rev || m.n ? columnsChart(m.days, m.weekly) : '<div class="muted" style="padding:24px 0">За выбранный период заказов нет</div>'}
+    ${tbl([m.weekly ? 'Неделя с' : 'Дата', 'Заказов', 'Выручка'], m.days.map(([k, v]) => [k.split('-').reverse().join('.'), v.n, fmt(v.rev)]))}</div>
+  <div class="two">
+    <div class="card"><b>Топ блюд по выручке</b>${hbars(m.dishes, (r) => r.n + ' шт')}
+      ${tbl(['Блюдо', 'Штук', 'Выручка'], m.dishes.map((r) => [r.name, r.n, fmt(r.rev)]))}</div>
+    <div class="card"><b>Топ клиентов по выручке</b>${hbars(m.cl, (r) => r.n + ' зак.')}
+      ${tbl(['Клиент', 'Заказов', 'Выручка'], m.cl.map((r) => [r.name, r.n, fmt(r.rev)]))}</div>
+  </div>
+  <div class="card"><b>Заказы по статусам</b><div class="row">${Object.entries(STATUSES).map(([k, n]) => `<span class="pill" style="font-size:13px;padding:5px 12px">${n}: <b>${m.byStatus[k] || 0}</b></span>`).join('')}</div></div>`;
+}
+
 function ordersTab() {
   const rows = (S.d.orders || []).filter((o) => !S.statusFilter || o.status === S.statusFilter);
   const clientOpts = Object.fromEntries([['', 'Все клиенты'], ...(S.d.clients || []).map((c) => [c.id, c.name])]);
@@ -92,13 +183,14 @@ function ordersTab() {
     ${sel(clientOpts, S.orderClient, 'data-act="orderClientFilter"')}${sel({ '': 'Все статусы', ...STATUSES }, S.statusFilter, 'data-act="filter"')}<button class="btn g" data-act="reload">Обновить</button></div>
     ${rangeBar()}
     <div class="msg">Период: ${periodLabel()} · заказов: <b>${rows.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(rows))}</b></div>
-    ${rows.length ? rows.map((o) => `<div class="card">
+    ${rows.length ? rows.map((o) => `<div class="card" style="${o.status === 'failed' ? 'box-shadow:inset 0 0 0 2px #b53137' : ''}">
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><b>${esc(o.clients ? o.clients.name : '')}</b><span class="spacer"></span><b class="geo">${fmt(o.total)}</b></div>
       <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}${o.comment ? ' · «' + esc(o.comment) + '»' : ''}</div>
       <div>${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
       ${o.iiko_error ? `<div class="red">iiko: ${esc(o.iiko_error)}</div>` : ''}
       <div class="row">${sel(STATUSES, o.status, `data-act="orderStatus" data-id="${o.id}"`)}
-        <span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span><span class="spacer"></span>
+        <span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span>
+        ${!o.iiko_order_id && o.status !== 'cancelled' ? `<button class="btn o" data-act="resend" data-id="${o.id}">${o.status === 'failed' || o.iiko_error ? 'Отправить в iiko заново' : 'Отправить в iiko'}</button>` : ''}<span class="spacer"></span>
         <button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">За выбранный период заказов нет</div>'}`;
 }
 
@@ -203,7 +295,12 @@ function certsTab() {
 
 function settingsTab() {
   const names = { min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
-  return `<h1>Настройки</h1><div class="card">${(S.d.settings || []).map((s) => `<label class="f">${esc(names[s.key] || s.key)}
+  return `<h1>Настройки</h1>
+  <div class="card"><b>Связь с Telegram и iiko</b>
+    <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
+    <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button></div>
+    ${S.checkMsg ? `<pre class="link" style="white-space:pre-wrap">${esc(S.checkMsg)}</pre>` : ''}</div>
+  <div class="card">${(S.d.settings || []).map((s) => `<label class="f">${esc(names[s.key] || s.key)}
     <input type="text" data-t="settings" data-key="${esc(s.key)}" value="${esc(s.value)}"></label>`).join('')}</div>`;
 }
 
@@ -219,7 +316,7 @@ function render() {
       <button class="btn o" type="submit">Войти</button></form></div>`;
     return;
   }
-  const body = { orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab]();
+  const body = { dashboard: dashboardTab, orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab]();
   app.innerHTML = `<header class="bar"><div class="bar-in"><span class="brand">Tasty Gourmet</span>
     ${TABS.map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}${k === 'requests' && S.newReq ? `<span class="n">${S.newReq}</span>` : ''}${k === 'feedback' && S.newFb ? `<span class="n">${S.newFb}</span>` : ''}</button>`).join('')}
     <span class="spacer"></span><span class="muted">${esc(S.user.email)}</span><button class="btn g" data-act="logout">Выйти</button></div></header>
@@ -233,6 +330,15 @@ const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
   reload: () => loadTab(),
+  resend: async (el) => {
+    el.disabled = true; el.textContent = 'Отправляем…';
+    const r = await api('/api/send-order', { order_id: Number(el.dataset.id) });
+    if (r.ok) note(r.already ? 'Заказ уже был передан в iiko' : 'Заказ передан в iiko'); else note('Не удалось: ' + (r.error || 'ошибка') + (r.telegram && r.telegram.sent ? ' (уведомление отправлено в Telegram)' : ''), true);
+    await loadTab('orders');
+  },
+  toFailed: async () => { S.tab = 'orders'; S.statusFilter = 'failed'; await loadTab('orders'); },
+  checkTg: async () => { S.checkMsg = 'Проверяем…'; render(); const r = await api('/api/check', { what: 'telegram' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
+  checkIiko: async () => { S.checkMsg = 'Проверяем…'; render(); const r = await api('/api/check', { what: 'iiko' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
   preset: async (el) => { [S.from, S.to] = presetRange(el.dataset.v); await reloadRange(); },
   from: async (el) => { if (!el.value) return; S.from = el.value; if (S.to < S.from) S.to = S.from; await reloadRange(); },
   to: async (el) => { if (!el.value) return; S.to = el.value; if (S.from > S.to) S.from = S.to; await reloadRange(); },
@@ -267,10 +373,10 @@ const A = {
   newCert: async () => { if (await run(db.from('certificates').insert({ title: 'Новый сертификат', active: false, sort: (S.d.certs || []).length + 1 }))) loadTab('certs'); },
   delCert: async (el) => { if (ask('Удалить сертификат?') && await run(db.from('certificates').delete().eq('id', el.dataset.id))) loadTab('certs'); },
 };
-async function reloadRange() { if (S.tab === 'clients' && S.client) { await loadClientOrders(); render(); } else await loadTab('orders'); }
+async function reloadRange() { if (S.tab === 'clients' && S.client) { await loadClientOrders(); render(); } else await loadTab(S.tab === 'dashboard' ? 'dashboard' : 'orders'); }
 async function openClientTab(id) { S.tab = 'clients'; if (!S.d.clients) await loadTab('clients'); await openClient(id); }
 
-document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (el && el.tagName !== 'SELECT' && el.type !== 'date' && A[el.dataset.act]) A[el.dataset.act](el); });
+document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (el && el.tagName !== 'SELECT' && el.type !== 'date' && A[el.dataset.act]) { if (el.tagName === 'A') e.preventDefault(); A[el.dataset.act](el); } });
 document.addEventListener('submit', async (e) => {
   if (e.target.id !== 'loginForm') return; e.preventDefault();
   const { error } = await db.auth.signInWithPassword({ email: val('em'), password: val('pw') });
@@ -297,6 +403,19 @@ document.addEventListener('change', async (e) => {
     await run(db.from(el.dataset.t).update({ [el.dataset.c]: v }).eq('id', el.dataset.id), 'Сохранено');
   }
 });
+
+/* ---------- подсказка на графиках ---------- */
+const tip = document.createElement('div'); tip.id = 'tip'; document.body.appendChild(tip);
+function showTip(el, x, y) {
+  const [a, b, c] = (el.dataset.tip || '').split('|'); tip.textContent = '';
+  const v = document.createElement('div'); v.className = 'tv1'; v.textContent = b;
+  const l = document.createElement('div'); l.className = 'tl1'; l.textContent = a + (c ? ' · ' + c : '');
+  tip.append(v, l); tip.style.display = 'block';
+  const r = tip.getBoundingClientRect(); tip.style.left = Math.min(window.innerWidth - r.width - 8, Math.max(8, x + 12)) + 'px'; tip.style.top = Math.max(8, y - r.height - 12) + 'px';
+}
+document.addEventListener('pointermove', (e) => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) showTip(el, e.clientX, e.clientY); else tip.style.display = 'none'; });
+document.addEventListener('focusin', (e) => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) { const r = el.getBoundingClientRect(); showTip(el, r.left + r.width / 2, r.top); } });
+document.addEventListener('focusout', () => { tip.style.display = 'none'; });
 
 /* ---------- старт ---------- */
 async function boot() {
