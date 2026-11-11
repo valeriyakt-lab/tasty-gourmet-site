@@ -75,6 +75,28 @@ async function decideRequest(id, action) {
   }
 }
 
+// Подтверждение клиенту в его личный Telegram («заказ принят» и сумма), как в старом сайте.
+// Отправляется токеном СТАРОГО бота (TELEGRAM_CLIENT_BOT_TOKEN): клиенты подключали уведомления именно ему, а новому боту писать не могут.
+const fmtMoney = (n) => String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' тг';
+async function notifyClient(order, phone) {
+  const token = process.env.TELEGRAM_CLIENT_BOT_TOKEN;
+  if (!token || !phone) return 0;
+  const links = (await sb('tg_links?select=chat_id&phone=eq.' + encodeURIComponent(phone))) || [];
+  if (!links.length) return 0;
+  const day = new Date(order.created_at).toLocaleDateString('ru-RU', { timeZone: 'Asia/Almaty' });
+  const qty = order.order_items.reduce((a, i) => a + Number(i.qty), 0);
+  const text = ['✅ Tasty Gourmet: заказ №' + order.number + ' принят', '📅 ' + day, order.pickup ? '🏃 Самовывоз' : '📍 ' + order.address,
+    ...order.order_items.map((i) => '• ' + i.name + ' × ' + i.qty), '', '💰 Сумма: ' + fmtMoney(order.total) + ' · ' + qty + ' шт'].join('\n');
+  let n = 0;
+  for (const l of links) {
+    try {
+      const r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: l.chat_id, text: text.slice(0, 4000) }) });
+      if (r.ok) n += 1;
+    } catch (e) { /* клиент мог заблокировать бота: заказ от этого не страдает */ }
+  }
+  return n;
+}
+
 const iikoConfigured = () => !!process.env.IIKO_API_LOGIN;
 let tokenCache = { t: null, exp: 0 };
 // Авторизация как в рабочем сценарии n8n: если заданы IIKO_APP_ID и IIKO_CLIENT_SECRET, используется /api/v2/access_token, иначе стандартный /api/1/access_token
@@ -130,4 +152,4 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const normPhone = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 11 ? '+7' + d.slice(1) : d.length === 10 ? '+7' + d : null; };
 
-module.exports = { sb, adminFromRequest, telegram, tgCall, webhookSecret, decideRequest, siteUrl, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, need };
+module.exports = { sb, adminFromRequest, telegram, tgCall, webhookSecret, decideRequest, siteUrl, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, notifyClient, need };

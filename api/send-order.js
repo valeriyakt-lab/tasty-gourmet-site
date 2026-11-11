@@ -1,5 +1,5 @@
 'use strict';
-const { sb, adminFromRequest, telegram, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone } = require('./_lib');
+const { sb, adminFromRequest, telegram, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, notifyClient } = require('./_lib');
 
 // Передача заказа на кассу iiko.
 // Вызывает сайт (после оформления заказа клиентом) или администратор (кнопка «Отправить в iiko»).
@@ -65,7 +65,9 @@ module.exports = async (req, res) => {
       break;
     }
     await sb('orders?id=eq.' + order.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ iiko_order_id: String(iikoId), iiko_error: null, status: ['new', 'failed'].includes(order.status) ? 'accepted' : order.status }) });
-    return res.status(200).json({ ok: true, iiko_order_id: String(iikoId) });
+    let notified = 0;
+    try { notified = await notifyClient(order, phone); } catch (e) { /* подтверждение клиенту не должно ломать передачу заказа */ }
+    return res.status(200).json({ ok: true, iiko_order_id: String(iikoId), client_notified: notified });
   } catch (e) {
     const msg = e.message || String(e);
     let tg = null;
