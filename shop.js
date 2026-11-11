@@ -35,7 +35,7 @@ const S = {
   qty: {}, pend: {}, pickup: false, addr: '', q: '', active: 0, comment: '',
   cartOpen: false, sending: false, done: null, cartError: '',
   modal: null, draftName: '', repOrder: null, repAddr: '', newAddr: '',
-  openOrder: null, idem: null, cartNotice: '', gate: null,
+  openOrder: null, idem: null, cartNotice: '', cartInfo: '', gate: null, cartReady: false, cartSig: '', cartTimer: null,
   fbKind: 'review', fbRating: 5, fbText: '', fbSent: false, fbError: '', fbSending: false,
 };
 
@@ -53,9 +53,51 @@ async function load() {
     else {
       S.gate = null; S.data = data; S.fatal = null;
       if (!S.addr || !data.addresses.includes(S.addr)) S.addr = data.addresses[0] || '';
+      if (!S.cartReady) await restoreCart();
     }
   } catch (e) { S.fatal = 'Не удалось загрузить данные. Проверьте интернет и обновите страницу.'; }
   S.loading = false; render();
+}
+
+/* ---------- сохранение корзины ---------- */
+// Корзина хранится в браузере и в базе: клиент может собрать заказ, уйти, вернуться (в том числе с другого устройства), дополнить и отправить.
+const CART_TTL = 7 * 864e5;
+const cartKey = () => 'tg_cart_v1:' + (S.data ? S.data.client.id : '');
+function cartSnapshot() {
+  const items = allItems(), names = {};
+  Object.keys(S.qty).forEach((id) => { if (items[id]) names[id] = items[id].name; });
+  return { qty: S.qty, names, pickup: S.pickup, addr: S.addr, comment: S.comment };
+}
+function persistCart() {
+  if (!S.data || !S.cartReady) return;
+  const sig = JSON.stringify(cartSnapshot());
+  if (sig === S.cartSig) return;
+  S.cartSig = sig;
+  const snap = { ...cartSnapshot(), t: Date.now() };
+  store.set(cartKey(), JSON.stringify(snap));
+  clearTimeout(S.cartTimer);
+  S.cartTimer = setTimeout(() => { rpc('save_cart', { p_token: S.token, p_data: Object.keys(S.qty).length ? snap : {} }).catch(() => {}); }, 1000);
+}
+async function restoreCart() {
+  let best = null;
+  try { const l = JSON.parse(store.get(cartKey()) || 'null'); if (l && l.t) best = l; } catch (e) {}
+  try {
+    const r = await rpc('get_cart', { p_token: S.token });
+    // побеждает более свежая версия; пустая и более свежая значит, что корзину отправили или очистили на другом устройстве
+    if (r && r.updated && (!best || r.updated > best.t)) best = r.data && r.data.qty ? { ...r.data, t: r.updated } : null;
+  } catch (e) {}
+  if (best && Date.now() - best.t < CART_TTL && best.qty && Object.keys(best.qty).length) {
+    const items = allItems(), qty = {}, missing = [];
+    Object.keys(best.qty).forEach((id) => { if (items[id]) qty[id] = best.qty[id]; else missing.push((best.names && best.names[id]) || 'блюдо №' + id); });
+    S.qty = qty;
+    if (best.pickup) S.pickup = true;
+    if (best.addr && S.data.addresses.includes(best.addr)) S.addr = best.addr;
+    if (best.comment) S.comment = best.comment;
+    S.cartNotice = missing.length ? 'Этих блюд сегодня нет в меню, они убраны из корзины: ' + missing.join(', ') + '.' : '';
+    if (Object.keys(qty).length) S.cartInfo = 'Корзина сохранена с прошлого раза. Проверьте состав перед отправкой.';
+  }
+  S.cartSig = JSON.stringify(cartSnapshot());
+  S.cartReady = true;
 }
 
 /* ---------- график работы ---------- */
@@ -316,6 +358,7 @@ function cartView() {
         <div class="stepper sm"><button class="m" data-act="dec" data-id="${l.id}" aria-label="Убрать">−</button>
           <input type="text" inputmode="numeric" value="${l.qty}" data-chg="qty" data-id="${l.id}" aria-label="Количество">
           <button class="p" data-act="inc" data-id="${l.id}" aria-label="Добавить">+</button></div></div>`).join('')}</div>
+      ${S.cartInfo ? `<div class="err" style="background:#e7f2eb;color:#006a2e">${esc(S.cartInfo)}</div>` : ''}
       ${S.cartNotice ? `<div class="err" style="background:#fdf3dc;color:#8a6410">${esc(S.cartNotice)}</div>` : ''}
       <div class="box"><div class="muted" style="font-size:13px;font-weight:500">${S.pickup ? 'Получение' : 'Адрес доставки'}</div>
         <div style="font-weight:500">${esc(where)}</div>
@@ -368,6 +411,7 @@ function render() {
   if (S.loading && !S.data) app.innerHTML = '<div class="boot">Загрузка…</div>';
   else if (!S.data) app.innerHTML = authView();
   else app.innerHTML = shopView();
+  persistCart();
   if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.s, keep.e); } catch (e) {} } }
 }
 
@@ -398,7 +442,7 @@ const actions = {
     catch (e) { S.regError = 'Проверьте название точки и телефон.'; }
     render();
   },
-  logout: () => { store.del(TOKEN_KEY); S.token = null; S.data = null; S.gate = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
+  logout: () => { S.cartReady = false; clearTimeout(S.cartTimer); store.del(TOKEN_KEY); S.token = null; S.data = null; S.gate = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
   toMenu: () => { S.view = 'menu'; render(); },
   toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); },
   toFeedback: () => { S.view = 'feedback'; render(); window.scrollTo({ top: 0 }); },
@@ -461,7 +505,7 @@ const actions = {
       if (!S.idem) S.idem = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
       const r = await rpc('place_order', { p_token: S.token, p_items: lines.map((l) => ({ item_id: l.id, qty: l.qty })), p_pickup: S.pickup, p_address: S.pickup ? '' : S.addr, p_comment: S.comment, p_key: S.idem });
       S.done = { number: r.number, where: S.pickup ? 'Самовывоз: ' + (settings().pickup_address || '') : 'Доставка: ' + S.addr };
-      S.qty = {}; S.comment = ''; S.sending = false; S.idem = null; S.cartNotice = '';
+      S.qty = {}; S.comment = ''; S.sending = false; S.idem = null; S.cartNotice = ''; S.cartInfo = '';
       pushToKitchen(r.number);
       await load();
     } catch (e) {
@@ -492,7 +536,7 @@ document.addEventListener('input', (e) => {
   const el = e.target;
   if (el.id === 'q') { S.q = el.value; render(); }
   else if (el.id === 'newAddr') { S.newAddr = el.value; const b = document.querySelector('[data-act="saveAddr"],[data-act="doRepeat"]'); if (b) b.disabled = S.modal === 'addr' ? S.newAddr.trim().length < 3 : !S.newAddr.trim(); }
-  else if (el.id === 'comment') { S.comment = el.value; }
+  else if (el.id === 'comment') { S.comment = el.value; persistCart(); }
   else if (el.id === 'fbText') { S.fbText = el.value; }
 });
 document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('input[data-chg="qty"],input[data-chg="pend"]')) e.target.select(); });
