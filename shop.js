@@ -36,6 +36,7 @@ const S = {
   cartOpen: false, sending: false, done: null, cartError: '',
   modal: null, draftName: '', repOrder: null, repAddr: '', newAddr: '',
   openOrder: null,
+  fbKind: 'review', fbRating: 5, fbText: '', fbSent: false, fbError: '', fbSending: false,
 };
 
 const settings = () => (S.data && S.data.settings) || {};
@@ -187,6 +188,11 @@ function menuView() {
     </footer></main>`;
 }
 
+function dlUrl(c) {
+  const ext = ((c.file_url || '').split('?')[0].match(/\.([a-z0-9]{2,5})$/i) || [])[1] || 'pdf';
+  const name = String(c.title || 'certificate').replace(/[^\wА-Яа-яЁё.\- ]+/g, '').trim().replace(/\s+/g, '_') + '.' + ext;
+  return c.file_url + (c.file_url.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(name);
+}
 function certCard(c) {
   const isImg = c.file_url && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(c.file_url);
   const pic = isImg
@@ -194,7 +200,9 @@ function certCard(c) {
     : `<div class="ph"><span>${c.file_url ? 'документ' : 'скан сертификата'}</span></div>`;
   return `<article class="dish">${pic}<div style="display:grid;gap:2px;padding:0 4px">
     <div class="cert-title">${esc(c.title)}</div><div class="cert-note">${esc(c.note || '')}</div>
-    ${c.file_url && !isImg ? `<a class="cert-file" href="${esc(c.file_url)}" target="_blank" rel="noopener">Открыть документ</a>` : ''}</div></article>`;
+    ${c.file_url ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      ${!isImg ? `<a class="btn-ghost" style="text-decoration:none" href="${esc(c.file_url)}" target="_blank" rel="noopener">Открыть</a>` : ''}
+      <a class="btn-soft" style="text-decoration:none" href="${esc(dlUrl(c))}" download>Скачать</a></div>` : ''}</div></article>`;
 }
 
 function ordersView() {
@@ -215,6 +223,26 @@ function ordersView() {
         ${canRepeat ? `<button class="btn-soft" data-act="repeat" data-id="${o.id}">${o.status === 'failed' ? 'Отправить заново' : 'Повторить заказ'}</button>` : ''}
       </div></div>`;
   }).join('')}</div>`;
+}
+
+function feedbackView() {
+  const rv = S.fbKind === 'review';
+  const tab = (on) => `background:${on ? '#008037' : 'transparent'};color:${on ? '#fff' : '#6e696a'}`;
+  if (S.fbSent) return `<div class="orders"><div class="card" style="text-align:center">
+    <div style="width:64px;height:64px;border-radius:50%;background:#008037;color:#fff;display:grid;place-items:center;font:700 30px Geologica,sans-serif;margin:0 auto">✓</div>
+    <div class="geo green" style="font-weight:700;font-size:22px">Спасибо!</div>
+    <p class="muted" style="margin:0">Мы получили ваше сообщение и обязательно его прочитаем.</p>
+    <button class="btn btn-green" data-act="fbAgain">Написать ещё</button></div></div>`;
+  return `<div class="orders"><h2 class="geo" style="margin:0 0 4px;font-weight:700;font-size:26px;text-transform:uppercase">Отзывы и предложения</h2>
+    <div class="card">
+      <div class="tabs" style="background:#f4f3f0"><button data-act="fbKind" data-v="review" style="${tab(rv)}">Отзыв</button><button data-act="fbKind" data-v="suggestion" style="${tab(!rv)}">Предложение</button></div>
+      ${rv ? `<div><div class="muted" style="font-size:13px;font-weight:500;margin-bottom:6px">Ваша оценка</div><div style="display:flex;gap:4px">
+        ${[1, 2, 3, 4, 5].map((n) => `<button data-act="fbRate" data-v="${n}" aria-label="${n}" style="border:0;background:none;font-size:32px;line-height:1;padding:0 2px;color:${n <= S.fbRating ? '#e9ae2e' : '#d9d5d0'}">★</button>`).join('')}</div></div>` : ''}
+      <label class="field">${rv ? 'Расскажите, как всё прошло' : 'Что нам улучшить или добавить?'}
+        <textarea id="fbText" rows="5" maxlength="2000" placeholder="${rv ? 'Качество блюд, доставка, работа менеджера…' : 'Новые блюда, удобство сайта, условия доставки…'}">${esc(S.fbText)}</textarea></label>
+      ${S.fbError ? `<div class="err">${esc(S.fbError)}</div>` : ''}
+      <button class="btn btn-orange" data-act="sendFb" ${S.fbSending ? 'disabled' : ''}>${S.fbSending ? 'Отправляем…' : 'Отправить'}</button>
+    </div></div>`;
 }
 
 function modalView() {
@@ -297,12 +325,13 @@ function shopView() {
           : `<span class="muted" style="font-size:14px">Кухня: ${esc(settings().pickup_address || '')}, с ${esc(settings().pickup_from || '7:00')}</span>`}
       </div>
       <nav class="nav"><button class="link" data-act="toOrders" style="background:${S.view === 'orders' ? '#f4f3f0' : 'transparent'}">Мои заказы</button>
+        <button class="link" data-act="toFeedback" style="background:${S.view === 'feedback' ? '#f4f3f0' : 'transparent'}">Отзывы</button>
         <button class="link" data-act="logout" style="color:#6e696a;font-size:14px">Выйти</button>
         <button class="cart-btn" data-act="openCart"><span>Корзина</span>${cnt ? `<span style="display:flex;align-items:center;gap:10px"><span style="width:1px;height:18px;background:rgba(255,255,255,.45)"></span><span style="font-variant-numeric:tabular-nums">${cnt}</span></span>` : ''}</button></nav>
     </div>
     ${isMenu ? `<div class="chips">${chips}<input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"></div>` : ''}
   </header>
-  ${isMenu ? menuView() : ordersView()}
+  ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : feedbackView()}
   ${cnt && !S.cartOpen ? `<div class="float"><button data-act="openCart"><span style="font:600 16px Rubik,sans-serif">Корзина</span><span style="font-size:14px;opacity:.9;flex:1;text-align:left">${cnt} шт</span><span class="geo" style="font-weight:700;font-size:18px;font-variant-numeric:tabular-nums">${fmt(sum)}</span></button></div>` : ''}
   </div>${modalView()}${cartView()}`;
 }
@@ -338,6 +367,18 @@ const actions = {
   logout: () => { store.del(TOKEN_KEY); S.token = null; S.data = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
   toMenu: () => { S.view = 'menu'; render(); },
   toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); },
+  toFeedback: () => { S.view = 'feedback'; render(); window.scrollTo({ top: 0 }); },
+  fbKind: (el) => { S.fbText = val('fbText') || S.fbText; S.fbKind = el.dataset.v; S.fbError = ''; render(); },
+  fbRate: (el) => { S.fbText = val('fbText') || S.fbText; S.fbRating = Number(el.dataset.v); render(); },
+  fbAgain: () => { S.fbSent = false; S.fbText = ''; S.fbError = ''; render(); },
+  sendFb: async () => {
+    S.fbText = val('fbText'); S.fbError = '';
+    if (S.fbText.trim().length < 3) { S.fbError = 'Напишите хотя бы пару слов.'; render(); return; }
+    S.fbSending = true; render();
+    try { await rpc('submit_feedback', { p_token: S.token, p_kind: S.fbKind, p_rating: S.fbKind === 'review' ? S.fbRating : null, p_message: S.fbText }); S.fbSent = true; S.fbText = ''; }
+    catch (e) { S.fbError = e.code === 'too_many' ? 'Слишком много сообщений за час. Попробуйте позже.' : 'Не удалось отправить. Попробуйте ещё раз.'; }
+    S.fbSending = false; render();
+  },
   setDelivery: () => { S.pickup = false; render(); },
   setPickup: () => { S.pickup = true; render(); },
   goCat: (el) => scrollToCat(Number(el.dataset.id)),
@@ -411,6 +452,7 @@ document.addEventListener('input', (e) => {
   if (el.id === 'q') { S.q = el.value; render(); }
   else if (el.id === 'newAddr') { S.newAddr = el.value; const b = document.querySelector('[data-act="saveAddr"],[data-act="doRepeat"]'); if (b) b.disabled = S.modal === 'addr' ? S.newAddr.trim().length < 3 : !S.newAddr.trim(); }
   else if (el.id === 'comment') { S.comment = el.value; }
+  else if (el.id === 'fbText') { S.fbText = el.value; }
 });
 document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('input[data-chg="qty"],input[data-chg="pend"]')) e.target.select(); });
 document.addEventListener('keydown', (e) => {

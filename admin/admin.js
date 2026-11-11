@@ -11,9 +11,24 @@ const linkFor = (token) => location.origin + '/?t=' + token;
 const newToken = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 const STATUSES = { new: 'Новая', accepted: 'Принята', cooking: 'Готовится', delivering: 'В пути', done: 'Выполнен', cancelled: 'Отменён', failed: 'Не передана' };
-const TABS = [['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
+const TABS = [['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
+const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const startISO = (s) => new Date(s + 'T00:00:00').toISOString();
+const endISO = (s) => addDays(new Date(s + 'T00:00:00'), 1).toISOString(); // конец выбранного дня включительно
+const PRESETS = { today: 'Сегодня', yest: 'Вчера', d7: '7 дней', d30: '30 дней', month: 'Этот месяц' };
+function presetRange(k) {
+  const t = new Date();
+  if (k === 'today') return [ymd(t), ymd(t)];
+  if (k === 'yest') return [ymd(addDays(t, -1)), ymd(addDays(t, -1))];
+  if (k === 'd7') return [ymd(addDays(t, -6)), ymd(t)];
+  if (k === 'd30') return [ymd(addDays(t, -29)), ymd(t)];
+  return [ymd(new Date(t.getFullYear(), t.getMonth(), 1)), ymd(t)];
+}
+const counted = (o) => !['cancelled', 'failed'].includes(o.status);
+const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'orders', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null };
+const S = { user: null, tab: 'orders', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(new Date()), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0 };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
 async function run(p, okMsg) { const { data, error } = await p; if (error) { note(error.message, true); return null; } if (okMsg) note(okMsg); return data === null ? true : data; }
@@ -21,7 +36,13 @@ async function run(p, okMsg) { const { data, error } = await p; if (error) { not
 /* ---------- загрузка ---------- */
 async function loadTab(tab = S.tab) {
   const d = S.d;
-  if (tab === 'orders') d.orders = (await db.from('orders').select('*, clients(name), order_items(name,qty,price)').order('created_at', { ascending: false }).limit(150)).data || [];
+  if (tab === 'orders') {
+    let q = db.from('orders').select('*, clients(name), order_items(name,qty,price)').gte('created_at', startISO(S.from)).lt('created_at', endISO(S.to)).order('created_at', { ascending: false }).limit(2000);
+    if (S.orderClient) q = q.eq('client_id', S.orderClient);
+    d.orders = (await q).data || [];
+    if (!d.clients) d.clients = (await db.from('clients').select('*').order('name')).data || [];
+  }
+  if (tab === 'feedback') d.feedback = (await db.from('feedback').select('*, clients(name)').order('created_at', { ascending: false }).limit(300)).data || [];
   if (tab === 'requests') d.requests = (await db.from('registration_requests').select('*').order('created_at', { ascending: false }).limit(100)).data || [];
   if (tab === 'clients') d.clients = (await db.from('clients').select('*').order('name')).data || [];
   if (tab === 'menu') {
@@ -32,7 +53,15 @@ async function loadTab(tab = S.tab) {
   if (tab === 'settings') d.settings = (await db.from('settings').select('*').order('key')).data || [];
   render();
 }
-async function countNew() { const { count } = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = count || 0; }
+async function countNew() {
+  const r = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = r.count || 0;
+  const f = await db.from('feedback').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newFb = f.count || 0;
+}
+async function loadClientOrders() {
+  if (!S.client) return;
+  S.clientOrders = (await db.from('orders').select('*, order_items(name,qty,price)').eq('client_id', S.client.c.id)
+    .gte('created_at', startISO(S.from)).lt('created_at', endISO(S.to)).order('created_at', { ascending: false }).limit(2000)).data || [];
+}
 async function openClient(id) {
   const [c, a, p, items] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
@@ -40,16 +69,29 @@ async function openClient(id) {
     db.from('client_prices').select('item_id, price').eq('client_id', id),
     db.from('menu_items').select('id,name,price').order('name'),
   ]);
-  S.client = { c: c.data, addrs: a.data || [], prices: p.data || [], items: items.data || [] }; render();
+  S.client = { c: c.data, addrs: a.data || [], prices: p.data || [], items: items.data || [] }; await loadClientOrders(); render();
 }
 
 /* ---------- вкладки ---------- */
 const sel = (opts, cur, attrs) => `<select ${attrs}>${Object.entries(opts).map(([k, v]) => `<option value="${esc(k)}" ${String(k) === String(cur) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
 
+function rangeBar() {
+  const cur = Object.keys(PRESETS).find((k) => { const r = presetRange(k); return r[0] === S.from && r[1] === S.to; });
+  return `<div class="card"><div class="row">
+    ${Object.entries(PRESETS).map(([k, n]) => `<button class="btn ${cur === k ? '' : 'g'}" data-act="preset" data-v="${k}">${n}</button>`).join('')}
+    <span class="spacer"></span>
+    <label class="row muted">С <input type="date" data-act="from" value="${S.from}" max="${S.to}"></label>
+    <label class="row muted">по <input type="date" data-act="to" value="${S.to}" min="${S.from}"></label></div></div>`;
+}
+const periodLabel = () => (S.from === S.to ? S.from.split('-').reverse().join('.') : S.from.split('-').reverse().join('.') + ' — ' + S.to.split('-').reverse().join('.'));
+
 function ordersTab() {
   const rows = (S.d.orders || []).filter((o) => !S.statusFilter || o.status === S.statusFilter);
+  const clientOpts = Object.fromEntries([['', 'Все клиенты'], ...(S.d.clients || []).map((c) => [c.id, c.name])]);
   return `<div class="row"><h1>Заказы</h1><span class="spacer"></span>
-    ${sel({ '': 'Все статусы', ...STATUSES }, S.statusFilter, 'data-act="filter"')}<button class="btn g" data-act="reload">Обновить</button></div>
+    ${sel(clientOpts, S.orderClient, 'data-act="orderClientFilter"')}${sel({ '': 'Все статусы', ...STATUSES }, S.statusFilter, 'data-act="filter"')}<button class="btn g" data-act="reload">Обновить</button></div>
+    ${rangeBar()}
+    <div class="msg">Период: ${periodLabel()} · заказов: <b>${rows.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(rows))}</b></div>
     ${rows.length ? rows.map((o) => `<div class="card">
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><b>${esc(o.clients ? o.clients.name : '')}</b><span class="spacer"></span><b class="geo">${fmt(o.total)}</b></div>
       <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}${o.comment ? ' · «' + esc(o.comment) + '»' : ''}</div>
@@ -57,7 +99,7 @@ function ordersTab() {
       ${o.iiko_error ? `<div class="red">iiko: ${esc(o.iiko_error)}</div>` : ''}
       <div class="row">${sel(STATUSES, o.status, `data-act="orderStatus" data-id="${o.id}"`)}
         <span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span><span class="spacer"></span>
-        <button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">Заказов нет</div>'}`;
+        <button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">За выбранный период заказов нет</div>'}`;
 }
 
 function requestsTab() {
@@ -102,11 +144,28 @@ function clientDetail() {
   <div class="card"><b>Адреса доставки</b>
     ${addrs.map((a) => `<div class="row"><span style="flex:1">${esc(a.address)}</span><button class="btn d" data-act="delAddr" data-id="${a.id}">Удалить</button></div>`).join('') || '<span class="muted">Адресов нет</span>'}
     <div class="row"><input class="inp w" type="text" id="newAddr" placeholder="Новый адрес"><button class="btn" data-act="addAddr">Добавить</button></div></div>
+  ${rangeBar()}
+  <div class="card"><b>Заказы клиента</b>
+    <div class="msg">Период: ${periodLabel()} · заказов: <b>${S.clientOrders.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(S.clientOrders))}</b></div>
+    ${S.clientOrders.map((o) => `<div style="border-top:1px solid #efece7;padding-top:8px;display:grid;gap:2px">
+      <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><span class="pill">${STATUSES[o.status] || o.status}</span><span class="spacer"></span><b>${fmt(o.total)}</b></div>
+      <div class="muted">${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div></div>`).join('') || '<span class="muted">За выбранный период заказов нет</span>'}</div>
   <div class="card"><b>Индивидуальные цены</b><span class="muted">Если цена не задана, действует базовая цена из меню.</span>
     ${prices.map((p) => `<div class="row"><span style="flex:1">${esc(byId[p.item_id] ? byId[p.item_id].name : '#' + p.item_id)} <span class="muted">(база ${byId[p.item_id] ? fmt(byId[p.item_id].price) : '—'})</span></span>
       <input type="number" min="0" style="width:110px" data-pf="${p.item_id}" value="${p.price}"><button class="btn d" data-act="delPrice" data-id="${p.item_id}">Сбросить</button></div>`).join('')}
     <div class="row"><select id="newPriceItem" class="w">${items.filter((i) => !priced.has(i.id)).map((i) => `<option value="${i.id}">${esc(i.name)} — ${fmt(i.price)}</option>`).join('')}</select>
       <input type="number" min="0" id="newPriceVal" style="width:110px" placeholder="Цена"><button class="btn" data-act="addPrice">Добавить цену</button></div></div>`;
+}
+
+function feedbackTab() {
+  const rows = S.d.feedback || [];
+  return `<h1>Отзывы и предложения</h1>${rows.length ? rows.map((f) => `<div class="card" style="${f.status === 'new' ? 'box-shadow:inset 0 0 0 2px #e0641c' : ''}">
+    <div class="row"><span class="pill" style="background:${f.kind === 'review' ? '#e7f2eb' : '#fdf3dc'}">${f.kind === 'review' ? 'отзыв' : 'предложение'}</span>
+      ${f.rating ? `<span style="color:#e9ae2e;letter-spacing:2px">${'★'.repeat(f.rating)}<span style="color:#d9d5d0">${'★'.repeat(5 - f.rating)}</span></span>` : ''}
+      <b>${esc(f.clients ? f.clients.name : '')}</b><span class="spacer"></span><span class="muted">${fdt(f.created_at)}</span></div>
+    <div style="white-space:pre-wrap">${esc(f.message)}</div>
+    <div class="row">${f.status === 'new' ? `<button class="btn" data-act="fbRead" data-id="${f.id}">Прочитано</button>` : '<span class="muted">прочитано</span>'}
+      <span class="spacer"></span><button class="btn d" data-act="fbDel" data-id="${f.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">Пока ничего нет</div>'}`;
 }
 
 function menuTab() {
@@ -160,9 +219,9 @@ function render() {
       <button class="btn o" type="submit">Войти</button></form></div>`;
     return;
   }
-  const body = { orders: ordersTab, requests: requestsTab, clients: clientsTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab]();
+  const body = { orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab]();
   app.innerHTML = `<header class="bar"><div class="bar-in"><span class="brand">Tasty Gourmet</span>
-    ${TABS.map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}${k === 'requests' && S.newReq ? `<span class="n">${S.newReq}</span>` : ''}</button>`).join('')}
+    ${TABS.map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}${k === 'requests' && S.newReq ? `<span class="n">${S.newReq}</span>` : ''}${k === 'feedback' && S.newFb ? `<span class="n">${S.newFb}</span>` : ''}</button>`).join('')}
     <span class="spacer"></span><span class="muted">${esc(S.user.email)}</span><button class="btn g" data-act="logout">Выйти</button></div></header>
     <main>${S.msg ? `<div class="msg">${esc(S.msg)}</div>` : ''}${S.err ? `<div class="msg err">${esc(S.err)}</div>` : ''}${body}</main>`;
   if (keep) { const el = document.getElementById(keep); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} } }
@@ -174,6 +233,12 @@ const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
   reload: () => loadTab(),
+  preset: async (el) => { [S.from, S.to] = presetRange(el.dataset.v); await reloadRange(); },
+  from: async (el) => { if (!el.value) return; S.from = el.value; if (S.to < S.from) S.to = S.from; await reloadRange(); },
+  to: async (el) => { if (!el.value) return; S.to = el.value; if (S.from > S.to) S.from = S.to; await reloadRange(); },
+  orderClientFilter: async (el) => { S.orderClient = el.value; await loadTab('orders'); },
+  fbRead: async (el) => { if (await run(db.from('feedback').update({ status: 'read' }).eq('id', el.dataset.id))) { await countNew(); loadTab('feedback'); } },
+  fbDel: async (el) => { if (ask('Удалить сообщение?') && await run(db.from('feedback').delete().eq('id', el.dataset.id), 'Удалено')) { await countNew(); loadTab('feedback'); } },
   logout: async () => { await db.auth.signOut(); S.user = null; render(); },
   orderStatus: async (el) => { if (await run(db.from('orders').update({ status: el.value }).eq('id', el.dataset.id), 'Статус обновлён')) loadTab('orders'); },
   delOrder: async (el) => { if (ask('Удалить заказ?') && await run(db.from('orders').delete().eq('id', el.dataset.id), 'Заказ удалён')) loadTab('orders'); },
@@ -202,9 +267,10 @@ const A = {
   newCert: async () => { if (await run(db.from('certificates').insert({ title: 'Новый сертификат', active: false, sort: (S.d.certs || []).length + 1 }))) loadTab('certs'); },
   delCert: async (el) => { if (ask('Удалить сертификат?') && await run(db.from('certificates').delete().eq('id', el.dataset.id))) loadTab('certs'); },
 };
+async function reloadRange() { if (S.tab === 'clients' && S.client) { await loadClientOrders(); render(); } else await loadTab('orders'); }
 async function openClientTab(id) { S.tab = 'clients'; if (!S.d.clients) await loadTab('clients'); await openClient(id); }
 
-document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (el && el.tagName !== 'SELECT' && A[el.dataset.act]) A[el.dataset.act](el); });
+document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (el && el.tagName !== 'SELECT' && el.type !== 'date' && A[el.dataset.act]) A[el.dataset.act](el); });
 document.addEventListener('submit', async (e) => {
   if (e.target.id !== 'loginForm') return; e.preventDefault();
   const { error } = await db.auth.signInWithPassword({ email: val('em'), password: val('pw') });
@@ -213,7 +279,7 @@ document.addEventListener('submit', async (e) => {
 document.addEventListener('input', (e) => { if (e.target.id === 'clientQ') { S.clientQ = e.target.value; render(); } });
 document.addEventListener('change', async (e) => {
   const el = e.target;
-  if (el.tagName === 'SELECT' && el.dataset.act && A[el.dataset.act]) return A[el.dataset.act](el);
+  if ((el.tagName === 'SELECT' || el.type === 'date') && el.dataset.act && A[el.dataset.act]) return A[el.dataset.act](el);
   if (el.dataset.up) { // загрузка скана сертификата
     const f = el.files[0]; if (!f) return;
     const path = el.dataset.up + '-' + Date.now() + '-' + f.name.replace(/[^\w.\-]+/g, '_');
