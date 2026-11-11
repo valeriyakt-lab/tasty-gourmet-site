@@ -61,12 +61,14 @@ async function load() {
 /* ---------- график работы ---------- */
 function sched() {
   const now = new Date(), wd = (now.getDay() + 6) % 7, hr = now.getHours();
-  const mode = wd === 5 ? 'weekend' : wd === 6 ? (hr < 18 ? 'sunday' : 'closed') : hr < 19 ? 'open' : 'closed';
+  // заявки принимаются Пн–Чт до 19:00 и в Вс до 18:00 (на понедельник); в Пт и Сб заявки не принимаются
+  const mode = wd === 4 ? 'friday' : wd === 5 ? 'weekend' : wd === 6 ? (hr < 18 ? 'sunday' : 'closed') : hr < 19 ? 'open' : 'closed';
   const T = {
     open: ['Приём заявок открыт до 19:00', '#e7f2eb', '#008037'],
     sunday: ['Принимаем заявки на понедельник до 18:00', '#e7f2eb', '#008037'],
     closed: ['Приём заявок на сегодня закрыт', '#fbe9de', '#c95614'],
-    weekend: ['Сегодня выходной — заявки на понедельник принимаем в воскресенье до 18:00', '#fbe9de', '#c95614'],
+    friday: ['Сегодня заявки не принимаются. Заявки на понедельник принимаем в воскресенье до 18:00', '#fbe9de', '#c95614'],
+    weekend: ['В субботу и воскресенье доставка не осуществляется. Заявки на понедельник принимаем в воскресенье до 18:00', '#fbe9de', '#c95614'],
   }[mode];
   const week = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((l, i) =>
     `<span style="background:${i >= 5 ? 'transparent' : '#fff'};color:${i >= 5 ? '#a8a2a0' : '#393536'};box-shadow:${i === wd ? 'inset 0 0 0 2px ' + T[2] : i >= 5 ? 'inset 0 0 0 1px #d9d5d0' : 'none'}">${l}</span>`).join('');
@@ -138,7 +140,7 @@ function authView() {
         <div style="width:1px;background:#e3e0dc"></div>
         <div style="display:grid"><b class="geo green" style="font-size:26px;line-height:1.1">8+ лет</b><span class="muted" style="font-size:13px">на рынке<br>Казахстана</span></div>
       </div>
-      <p class="muted" style="margin:0;font-size:14px">Приём заявок: Пн–Пт до 19:00, Вс до 18:00 · Сб, Вс — выходные<br>В праздники график уточняйте у менеджера</p>
+      <p class="muted" style="margin:0;font-size:14px">Приём заявок: Пн–Чт до 19:00, Вс до 18:00 · Сб и Вс доставка не осуществляется<br>В праздники график уточняйте у менеджера</p>
     </div>
     <div class="tabs">
       <button data-act="tab" data-v="login" style="background:${reg ? 'transparent' : '#008037'};color:${reg ? '#6e696a' : '#fff'}">Вход</button>
@@ -187,7 +189,7 @@ function menuView() {
     <div class="sched" style="background:${sc.bg}">
       <div style="display:grid;gap:2px;min-width:0">
         <div class="geo" style="font-weight:600;font-size:16px;color:${sc.fg}">${sc.title}</div>
-        <div class="muted" style="font-size:14px">Приём заявок: Пн–Пт до 19:00, Вс до 18:00 · Доставка: Пн–Пт 7:00–11:00 · Сб, Вс — выходные</div>
+        <div class="muted" style="font-size:14px">Приём заявок: Пн–Чт до 19:00, Вс до 18:00 · Доставка: Пн–Пт 7:00–11:00 · Сб и Вс доставка не осуществляется</div>
         <div class="muted" style="font-size:13px">В праздничные дни график уточняйте у менеджера</div>
       </div>
       <div class="week" aria-label="График работы">${sc.week}</div>
