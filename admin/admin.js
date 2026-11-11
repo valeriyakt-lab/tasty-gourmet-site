@@ -376,9 +376,11 @@ function menuTab() {
       <td><input type="number" data-t="categories" data-id="${c.id}" data-c="sort" data-n="1" value="${c.sort}" style="width:80px"></td>
       <td><input type="checkbox" data-t="categories" data-id="${c.id}" data-c="active" data-b="1" ${c.active ? 'checked' : ''}></td>
       <td><button class="btn d" data-act="delCat" data-id="${c.id}">×</button></td></tr>`).join('')}</table></div>
-  <div class="card scroll"><b>Блюда</b><table><tr><th>Категория</th><th>Название</th><th>Базовая цена</th><th>Порядок</th><th>Показ</th><th>iiko ID</th><th></th></tr>
+  <div class="card scroll"><b>Блюда</b><table><tr><th>Категория</th><th>Название</th><th>Фото</th><th>Базовая цена</th><th>Порядок</th><th>Показ</th><th>iiko ID</th><th></th></tr>
     ${items.map((i) => `<tr><td>${sel(catOpts, i.category_id || '', `data-t="menu_items" data-id="${i.id}" data-c="category_id" data-nullable="1"`)}</td>
       <td><input type="text" data-t="menu_items" data-id="${i.id}" data-c="name" value="${esc(i.name)}"></td>
+      <td style="white-space:nowrap">${i.image_url ? `<img src="${esc(i.image_url)}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:8px;vertical-align:middle"> <button class="btn d" data-act="delPhoto" data-id="${i.id}" title="Убрать фото">×</button>` : ''}
+        <label class="btn g" style="cursor:pointer;display:inline-block">${i.image_url ? 'Заменить' : 'Фото'}<input type="file" accept="image/*" data-dish-up="${i.id}" hidden></label></td>
       <td><input type="number" min="0" data-t="menu_items" data-id="${i.id}" data-c="price" data-n="1" value="${i.price}" style="width:100px"></td>
       <td><input type="number" data-t="menu_items" data-id="${i.id}" data-c="sort" data-n="1" value="${i.sort}" style="width:70px"></td>
       <td><input type="checkbox" data-t="menu_items" data-id="${i.id}" data-c="active" data-b="1" ${i.active ? 'checked' : ''}></td>
@@ -400,13 +402,15 @@ function certsTab() {
 }
 
 function settingsTab() {
-  const names = { sleep_days: 'Через сколько дней без заказов ссылка клиента «засыпает»', min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
+  const names = { show_photos: 'Показывать фото блюд на сайте', sleep_days: 'Через сколько дней без заказов ссылка клиента «засыпает»', min_delivery: 'Минимальная сумма доставки, тг', pickup_address: 'Адрес самовывоза', pickup_from: 'Самовывоз с (время)', manager_phone: 'Телефон менеджера' };
+  const shown = (S.d.settings || []).find((x) => x.key === 'show_photos');
   return `<h1>Настройки</h1>
   <div class="card"><b>Связь с Telegram и iiko</b>
     <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
     <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button><button class="btn g" data-act="checkWebhook">Подключить кнопки Telegram</button></div>
     ${S.checkMsg ? `<pre class="link" style="white-space:pre-wrap">${esc(S.checkMsg)}</pre>` : ''}</div>
-  <div class="card">${(S.d.settings || []).map((s) => `<label class="f">${esc(names[s.key] || s.key)}
+  <div class="card">${(S.d.settings || []).map((s) => s.key === 'show_photos' ? `<label class="f">${esc(names[s.key])}
+    <select data-t="settings" data-key="show_photos"><option value="1" ${s.value !== '0' ? 'selected' : ''}>Да (если у блюда есть фото)</option><option value="0" ${s.value === '0' ? 'selected' : ''}>Нет, фото не показывать</option></select></label>` : `<label class="f">${esc(names[s.key] || s.key)}
     <input type="text" data-t="settings" data-key="${esc(s.key)}" value="${esc(s.value)}"></label>`).join('')}</div>`;
 }
 
@@ -447,10 +451,11 @@ const A = {
   syncMenu: async (el) => {
     el.disabled = true; el.textContent = 'Обновляем…';
     const r = await api('/api/sync-menu', {});
-    if (r.ok) note(`Меню обновлено: цен изменено ${r.prices.length}, скрыто ${r.hidden.length}, возвращено ${r.restored.length}, новых ${r.added.length}`);
+    if (r.ok) note(`Меню обновлено: цен изменено ${r.prices.length}, скрыто ${r.hidden.length}, возвращено ${r.restored.length}, новых ${r.added.length}${r.photos ? ', фото ' + r.photos : ''}`);
     else note('Не удалось: ' + (r.error || 'ошибка'), true);
     await loadTab('menu');
   },
+  delPhoto: async (el) => { if (await run(db.from('menu_items').update({ image_url: null }).eq('id', el.dataset.id), 'Фото убрано')) loadTab('menu'); },
   xlCancel: () => { S.xl = null; render(); },
   xlHide: (el) => { S.xl.hide = el.checked; S.xl.plan = planImport(S.xl.rows, S.xl.hide); render(); },
   xlExport: () => {
@@ -547,6 +552,20 @@ document.addEventListener('change', async (e) => {
       if (!rows.length) return note('В файле нет строк', true);
       S.xl = { fileName: f.name, rows, hide: true }; S.xl.plan = planImport(rows, true); render();
     } catch (err) { note('Не удалось прочитать файл: ' + err.message, true); }
+    return;
+  }
+  if (el.dataset.dishUp) { // фото блюда: уменьшаем до 1000 px, чтобы грузилось быстро
+    const f = el.files[0]; if (!f) return;
+    try {
+      const bmp = await createImageBitmap(f), k = Math.min(1, 1000 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+      cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+      const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
+      const path = 'dishes/' + el.dataset.dishUp + '-' + Date.now() + '.jpg';
+      const up = await db.storage.from('certificates').upload(path, blob, { contentType: 'image/jpeg', upsert: true }); if (up.error) return note(up.error.message, true);
+      const url = db.storage.from('certificates').getPublicUrl(path).data.publicUrl;
+      if (await run(db.from('menu_items').update({ image_url: url }).eq('id', el.dataset.dishUp), 'Фото загружено')) loadTab('menu');
+    } catch (err) { note('Не удалось обработать фото: ' + err.message, true); }
     return;
   }
   if (el.dataset.up) { // загрузка скана сертификата
