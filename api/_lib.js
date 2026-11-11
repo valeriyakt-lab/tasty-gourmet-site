@@ -47,7 +47,7 @@ async function telegram(text, opts = {}) {
   if (!process.env.TELEGRAM_BOT_TOKEN || !chat) return { sent: false, reason: 'Telegram не настроен (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)' };
   try {
     const m = await tgCall('sendMessage', { chat_id: chat, text: (siteLabel() + '\n' + text).slice(0, 3900), disable_web_page_preview: true, ...(opts.reply_markup ? { reply_markup: opts.reply_markup } : {}) });
-    return { sent: true, message_id: m.message_id };
+    return { sent: true, message_id: m && m.message_id };
   } catch (e) { return { sent: false, reason: e.message }; }
 }
 
@@ -77,19 +77,57 @@ async function decideRequest(id, action) {
 
 const iikoConfigured = () => !!process.env.IIKO_API_LOGIN;
 let tokenCache = { t: null, exp: 0 };
-async function iiko(path, body) {
-  if (!tokenCache.t || Date.now() > tokenCache.exp) {
-    const r = await fetch(IIKO_URL + '/api/1/access_token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiLogin: need(process.env.IIKO_API_LOGIN, 'IIKO_API_LOGIN') }) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.token) throw new Error('iiko: не удалось получить токен (' + (j.errorDescription || j.error || r.status) + ')');
-    tokenCache = { t: j.token, exp: Date.now() + 50 * 60 * 1000 };
-  }
-  const r = await fetch(IIKO_URL + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tokenCache.t }, body: JSON.stringify(body || {}) });
+// Авторизация как в рабочем сценарии n8n: если заданы IIKO_APP_ID и IIKO_CLIENT_SECRET, используется /api/v2/access_token, иначе стандартный /api/1/access_token
+async function iikoToken() {
+  if (tokenCache.t && Date.now() < tokenCache.exp) return tokenCache.t;
+  const login = need(process.env.IIKO_API_LOGIN, 'IIKO_API_LOGIN');
+  const v2 = process.env.IIKO_APP_ID && process.env.IIKO_CLIENT_SECRET;
+  const r = await fetch(IIKO_URL + (v2 ? '/api/v2/access_token' : '/api/1/access_token'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(v2 ? { appId: process.env.IIKO_APP_ID, clientSecret: process.env.IIKO_CLIENT_SECRET, apiKey: login } : { apiLogin: login }),
+  });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { if (r.status === 401) tokenCache = { t: null, exp: 0 }; throw new Error('iiko: ' + (j.errorDescription || j.error || 'ошибка ' + r.status)); }
+  if (!r.ok || !j.token) throw new Error('iiko: не удалось получить токен (' + (j.errorDescription || j.description || j.error || r.status) + ')');
+  tokenCache = { t: j.token, exp: Date.now() + 50 * 60 * 1000 };
+  return tokenCache.t;
+}
+async function iiko(path, body) {
+  const token = await iikoToken();
+  const r = await fetch(IIKO_URL + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { if (r.status === 401) tokenCache = { t: null, exp: 0 }; throw new Error('iiko ' + path + ': ' + (j.errorDescription || j.description || j.error || 'ошибка ' + r.status)); }
   return j;
 }
+// Организация и касса: из переменных окружения, а если не заданы и в iiko она единственная, берётся автоматически
+let idsCache = null;
+async function iikoIds() {
+  if (idsCache) return idsCache;
+  let org = process.env.IIKO_ORGANIZATION_ID, tg = process.env.IIKO_TERMINAL_GROUP_ID;
+  if (!org) {
+    const list = (await iiko('/api/1/organizations', { returnAdditionalInfo: false, includeDisabled: false })).organizations || [];
+    if (list.length !== 1) throw new Error(list.length ? 'В iiko несколько организаций: задайте IIKO_ORGANIZATION_ID (его покажет «Проверить iiko»)' : 'Для этого apiLogin нет организаций');
+    org = list[0].id;
+  }
+  if (!tg) {
+    const items = ((await iiko('/api/1/terminal_groups', { organizationIds: [org] })).terminalGroups || []).flatMap((g) => g.items || []);
+    if (items.length !== 1) throw new Error(items.length ? 'В iiko несколько касс: задайте IIKO_TERMINAL_GROUP_ID (его покажет «Проверить iiko»)' : 'В организации нет касс');
+    tg = items[0].id;
+  }
+  return (idsCache = { org, tg });
+}
+
+// Адрес → улица / дом / квартира (та же логика, что в рабочем сценарии n8n)
+function parseAddress(addr) {
+  let a = String(addr || '').replace(/^(г\.?|город)\s*алматы,?\s*/i, ''), street = '', house = '', flat = '';
+  const fm = a.match(/[,\s]+(?:кв\.?|квартира|оф\.?|офис)\s*([\w\/-]+)\s*$/i);
+  if (fm) { flat = fm[1]; a = a.slice(0, fm.index); }
+  const hm = a.match(/^(.*?)[,\s]+(?:д\.?\s*|дом\s*)?(\d+[А-Яа-яA-Za-z]?(?:[\/-]\d+[А-Яа-я]?)?)\s*$/);
+  if (hm && hm[1].trim()) { street = hm[1].replace(/^(ул\.?|улица)\s*/i, '').replace(/,$/, '').trim(); house = hm[2]; }
+  else { street = a.trim(); house = 'б/н'; }
+  return { street, house, flat };
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const normPhone = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 11 ? '+7' + d.slice(1) : d.length === 10 ? '+7' + d : null; };
 
-module.exports = { sb, adminFromRequest, telegram, tgCall, webhookSecret, decideRequest, siteUrl, iiko, iikoConfigured, normPhone, need };
+module.exports = { sb, adminFromRequest, telegram, tgCall, webhookSecret, decideRequest, siteUrl, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, need };
