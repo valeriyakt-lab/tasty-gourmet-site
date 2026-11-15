@@ -10,14 +10,21 @@ const { sb, adminFromRequest, telegram, iiko, iikoIds, iikoConfigured } = requir
 //  • новые блюда из iiko добавляются скрытыми, чтобы вы проверили их перед показом клиентам.
 const stripNum = (s) => String(s || '').replace(/^\d+(\.\d+)*\s+/, '').trim();
 const key = (s) => stripNum(s).toLowerCase().replace(/ё/g, 'е');
+const ckey = (s) => key(s).replace(/[^a-zа-я0-9]/g, '');
+const lev = (a, b) => { const d = Array.from({ length: a.length + 1 }, (_, i) => [i]); for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; };
+// «Салат и боул» и «Салаты и боул», «Онигири,ролл» и «Онигири, ролл» считаются одной категорией
+function findCat(cats, name) {
+  const k = ckey(name); if (!k) return null;
+  return cats.find((c) => c.k === k) || (k.length >= 8 ? cats.find((c) => c.k.length >= 8 && lev(c.k, k) <= 2) : null) || null;
+}
 
 async function syncMenu() {
   const cfgRows = (await sb('integration_settings?select=key,value')) || [];
   const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
   const menuId = String(cfg.iiko_external_menu_id || '').trim();
   if (!menuId) throw new Error('Не задан код внешнего меню iiko (integration_settings → iiko_external_menu_id)');
-  const groups = Array.isArray(cfg.iiko_menu_groups) ? cfg.iiko_menu_groups : [];
-  const showNew = cfg.iiko_new_dishes === 'show';
+  const showNew = cfg.iiko_new_dishes !== 'hide';   // по умолчанию новое блюдо с ценой сразу в меню, как в старом сайте
   const priceCat = String(cfg.iiko_price_category_id || '').trim();
 
   const ids = await iikoIds();
@@ -53,8 +60,7 @@ async function syncMenu() {
     try { const l = await iiko('/api/2/menu', {}); menus = ((l.externalMenus || []).map((x) => x.id + ' «' + x.name + '»').join('; ')) || 'список пуст'; } catch (e) { menus = 'не удалось получить (' + e.message + ')'; }
     throw new Error('Из iiko пришло 0 блюд для меню «' + menuId + '». ' + diag.join(' | ') + '. Доступные внешние меню: ' + menus);
   }
-  // фильтр по группам применяем, только если он действительно подходит (иначе идентификаторы групп из старого сайта не совпадают с меню)
-  if (groups.length) { const f = fromIiko.filter((x) => groups.includes(x.gid)); if (f.length >= 5) fromIiko = f; }
+  // выбранное в админке меню iiko и есть источник правды: никаких дополнительных фильтров по группам
 
   const items = (await sb('menu_items?select=id,name,price,active,iiko_id,sync_hidden,category_id,image_url&iiko_id=not.is.null')) || [];
   // защита: если iiko вернул пустое или подозрительно короткое меню, ничего не меняем
@@ -83,20 +89,21 @@ async function syncMenu() {
   if (hideIds.length) await patch('id=in.(' + hideIds.map((i) => i.id).join(',') + ')', { active: false, sync_hidden: true });
 
   if (toAdd.length) {
-    const cats = (await sb('categories?select=id,name&order=id')) || [];
-    const byName = Object.fromEntries(cats.map((c) => [key(c.name), c.id]));
+    const cats = ((await sb('categories?select=id,name&order=id')) || []).map((c) => ({ id: c.id, k: ckey(c.name) }));
+    const catId = {};
     let sort = 1000;
     for (const x of toAdd) {
-      if (!byName[key(x.group)] && x.group) {
-        const c = (await sb('categories', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ name: x.group, sort: 100 + Object.keys(byName).length }) }))[0];
-        byName[key(x.group)] = c.id;
-      }
+      if (!x.group) continue;
+      let c = findCat(cats, x.group);
+      if (!c) { const made = (await sb('categories', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ name: x.group, sort: 100 + cats.length }) }))[0]; c = { id: made.id, k: ckey(x.group) }; cats.push(c); }
+      catId[x.id] = c.id;
     }
     await sb('menu_items', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(toAdd.map((x) => ({
-      name: x.name, iiko_id: x.id, image_url: x.image || null, price: x.price > 0 ? x.price : 0, category_id: byName[key(x.group)] || null, sort: sort++, active: showNew && x.price > 0 })) ) });
+      name: x.name, iiko_id: x.id, image_url: x.image || null, price: x.price > 0 ? x.price : 0, category_id: catId[x.id] || null, sort: sort++, active: showNew && x.price > 0 })) ) });
     toAdd.forEach((x) => res.added.push(x.name));
   }
 
+  res.newShown = showNew;
   res.at = new Date().toISOString();
   await sb('integration_settings', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ key: 'iiko_menu_last', value: res, updated_at: res.at }) });
   return res;
@@ -127,7 +134,7 @@ module.exports = async (req, res) => {
     if (body.action === 'list') return res.status(200).json({ ok: true, ...(await listMenus()) });
     if (!cron) await saveChoice(body);
     const r = await syncMenu();
-    if (r.added.length) await telegram('🆕 В меню iiko появились новые блюда (добавлены скрытыми, проверьте в админке → Меню):\n' + r.added.slice(0, 30).join('\n'));
+    if (r.added.length) await telegram('🆕 В меню iiko появились новые блюда (' + (r.newShown ? 'добавлены на сайт' : 'добавлены скрытыми, проверьте в админке → Меню') + '):\n' + r.added.slice(0, 30).join('\n'));
     return res.status(200).json({ ok: true, ...r });
   } catch (e) {
     const isList = req.body && (req.body.action === 'list' || (typeof req.body === 'string' && req.body.includes('"list"')));
