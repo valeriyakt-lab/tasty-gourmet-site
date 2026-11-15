@@ -349,23 +349,23 @@ function planImport(rows, hideMissing) {
 
 function iikoSyncCard() {
   const l = S.d.syncLast, cfg = S.d.cfg || {}, L = S.d.iikoLists;
-  const curMenu = String(cfg.iiko_external_menu_id || ''), curCat = String(cfg.iiko_price_category_id || ''), newD = cfg.iiko_new_dishes === 'show' ? 'show' : 'hide';
+  const curMenu = String(cfg.iiko_external_menu_id || ''), curCat = String(cfg.iiko_price_category_id || ''), newD = cfg.iiko_new_dishes === 'hide' ? 'hide' : 'show';
   const list = (title, arr) => arr && arr.length ? `<div><b>${title} (${arr.length})</b><div class="muted" style="max-height:120px;overflow:auto;font-size:13px">${arr.slice(0, 40).map(esc).join('<br>')}${arr.length > 40 ? '<br>…' : ''}</div></div>` : '';
   const menuSel = L && L.menus && L.menus.length
     ? `<select id="menuSel">${L.menus.some((m) => m.id === curMenu) ? '' : `<option value="${esc(curMenu)}" selected>${esc(curMenu || '— выберите —')}</option>`}${L.menus.map((m) => `<option value="${esc(m.id)}" ${m.id === curMenu ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>`
     : `<input type="text" id="menuSel" value="${esc(curMenu)}" placeholder="код меню в iiko">`;
   const catSel = `<select id="priceCatSel"><option value="">Базовые цены</option>${((L && L.priceCategories) || []).map((c) => `<option value="${esc(c.id)}" ${c.id === curCat ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`;
   return `<div class="card"><b>Меню из iiko</b>
-    <span class="muted">Выберите меню, которое вы выгрузили в iikoWeb на нужный день, и нажмите «Сохранить и обновить меню». Блюда, которых нет в этом меню, скроются, а новые из iiko добавятся скрытыми, чтобы вы их проверили.</span>
+    <span class="muted">Выберите меню, которое вы выгрузили в iikoWeb на нужный день, и нажмите «Сохранить и обновить меню». Блюда, которых нет в этом меню, скроются, а блюда из меню, которых ещё не было на сайте, добавятся сами (с ценой из iiko).</span>
     <div class="two">
       <label class="f">Меню в iiko${menuSel}</label>
       <label class="f">Категория цен${catSel}</label>
-      <label class="f">Новое блюдо из iiko<select id="newSel"><option value="hide" ${newD === 'hide' ? 'selected' : ''}>Скрывать, пока не проверю</option><option value="show" ${newD === 'show' ? 'selected' : ''}>Показывать сразу (если есть цена)</option></select></label>
+      <label class="f">Новое блюдо из iiko<select id="newSel"><option value="show" ${newD === 'show' ? 'selected' : ''}>Показывать сразу, если есть цена</option><option value="hide" ${newD === 'hide' ? 'selected' : ''}>Скрывать, пока не проверю</option></select></label>
     </div>
     ${!L ? '<span class="muted">Загружаем список меню из iiko…</span>' : L.error ? `<span class="red" style="font-size:13px">Список меню из iiko не загрузился (${esc(L.error)}). Можно ввести код меню вручную.</span>` : ''}
     <div class="row"><button class="btn o" data-act="syncMenu">Сохранить и обновить меню</button>
       ${l ? `<span class="muted">Последнее обновление: ${fdt(l.at)} · блюд в iiko: ${l.total}</span>` : '<span class="muted">Ещё не обновлялось</span>'}</div>
-    ${l ? list('Изменились цены', l.prices) + list('Скрыты (нет в меню iiko)', l.hidden) + list('Возвращены в меню', l.restored) + list('Новые, скрыты, ждут вашей проверки', l.added) + list('Без цены в iiko', l.noPrice) : ''}</div>`;
+    ${l ? list('Изменились цены', l.prices) + list('Скрыты (нет в меню iiko)', l.hidden) + list('Возвращены в меню', l.restored) + list('Добавлены новые блюда', l.added) + list('Без цены в iiko', l.noPrice) : ''}</div>`;
 }
 
 function excelCard() {
@@ -394,7 +394,7 @@ function dishRow(i) {
 
 function menuTab() {
   const { cats = [], items = [] } = S.d;
-  const real = items.filter((i) => i.iiko_id || i.active);
+  const real = items.filter((i) => i.active || (i.iiko_id && !i.sync_hidden));   // блюда выбранного меню; блюда других дней скрыты синхронизацией и видны только в «Дополнительно»
   const shown = real.filter((i) => i.active).length, hidden = real.length - shown, noPrice = real.filter((i) => !(Number(i.price) > 0)).length;
   const keep = (i) => !S.menuOnly || !i.active || !(Number(i.price) > 0);
   const groups = cats.filter((c) => c.active).slice().sort((a, b) => a.sort - b.sort || a.id - b.id).map((c) => ({ c, rows: real.filter((i) => i.category_id === c.id && keep(i)) }));
