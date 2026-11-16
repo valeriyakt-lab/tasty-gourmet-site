@@ -91,13 +91,11 @@ async function loadClientOrders() {
     .gte('created_at', startISO(S.from)).lt('created_at', endISO(S.to)).order('created_at', { ascending: false }).limit(2000)).data || [];
 }
 async function openClient(id) {
-  const [c, a, p, items] = await Promise.all([
+  const [c, a] = await Promise.all([
     db.from('client_overview').select('*').eq('id', id).single(),
     db.from('client_addresses').select('*').eq('client_id', id).order('id'),
-    db.from('client_prices').select('item_id, price').eq('client_id', id),
-    db.from('menu_items').select('id,name,price').order('name'),
   ]);
-  S.client = { c: c.data, addrs: a.data || [], prices: p.data || [], items: items.data || [] }; await loadClientOrders(); render();
+  S.client = { c: c.data, addrs: a.data || [] }; await loadClientOrders(); render();
 }
 
 /* ---------- вкладки ---------- */
@@ -249,9 +247,7 @@ function clientsTab() {
 }
 
 function clientDetail() {
-  const { c, addrs, prices, items } = S.client;
-  const priced = new Set(prices.map((p) => p.item_id));
-  const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+  const { c, addrs } = S.client;
   return `<div class="row"><button class="btn g" data-act="backClients">← Клиенты</button><h1>${esc(c.name)}</h1></div>
   <div class="two">
     <div class="card"><b>Данные</b>
@@ -279,12 +275,7 @@ function clientDetail() {
     <div class="msg">Период: ${periodLabel()} · заказов: <b>${S.clientOrders.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(S.clientOrders))}</b></div>
     ${S.clientOrders.map((o) => `<div style="border-top:1px solid #efece7;padding-top:8px;display:grid;gap:2px">
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><span class="pill">${STATUSES[o.status] || o.status}</span><span class="spacer"></span><b>${fmt(o.total)}</b></div>
-      <div class="muted">${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div></div>`).join('') || '<span class="muted">За выбранный период заказов нет</span>'}</div>
-  <div class="card"><b>Индивидуальные цены</b><span class="muted">Если цена не задана, действует базовая цена из меню.</span>
-    ${prices.map((p) => `<div class="row"><span style="flex:1">${esc(byId[p.item_id] ? byId[p.item_id].name : '#' + p.item_id)} <span class="muted">(база ${byId[p.item_id] ? fmt(byId[p.item_id].price) : '—'})</span></span>
-      <input type="number" min="0" style="width:110px" data-pf="${p.item_id}" value="${p.price}"><button class="btn d" data-act="delPrice" data-id="${p.item_id}">Сбросить</button></div>`).join('')}
-    <div class="row"><select id="newPriceItem" class="w">${items.filter((i) => !priced.has(i.id)).map((i) => `<option value="${i.id}">${esc(i.name)} — ${fmt(i.price)}</option>`).join('')}</select>
-      <input type="number" min="0" id="newPriceVal" style="width:110px" placeholder="Цена"><button class="btn" data-act="addPrice">Добавить цену</button></div></div>`;
+      <div class="muted">${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div></div>`).join('') || '<span class="muted">За выбранный период заказов нет</span>'}</div>`;
 }
 
 function feedbackTab() {
@@ -562,8 +553,6 @@ const A = {
   regen: async () => { if (!ask('Старая ссылка клиента перестанет работать. Продолжить?')) return; if (await run(db.from('clients').update({ access_token: newToken() }).eq('id', S.client.c.id), 'Выдана новая ссылка')) openClient(S.client.c.id); },
   addAddr: async () => { const a = val('newAddr').trim(); if (a.length < 3) return; if (await run(db.from('client_addresses').insert({ client_id: S.client.c.id, address: a }))) openClient(S.client.c.id); },
   delAddr: async (el) => { if (await run(db.from('client_addresses').delete().eq('id', el.dataset.id))) openClient(S.client.c.id); },
-  addPrice: async () => { const item = val('newPriceItem'), price = Number(val('newPriceVal')); if (!item || !(price >= 0) || val('newPriceVal') === '') return; if (await run(db.from('client_prices').upsert({ client_id: S.client.c.id, item_id: item, price }))) openClient(S.client.c.id); },
-  delPrice: async (el) => { if (await run(db.from('client_prices').delete().eq('client_id', S.client.c.id).eq('item_id', el.dataset.id))) openClient(S.client.c.id); },
   newCat: async () => { const n = window.prompt('Название категории'); if (n && await run(db.from('categories').insert({ name: n.trim(), sort: (S.d.cats || []).length + 1 }))) loadTab('menu'); },
   newItem: async () => { const n = window.prompt('Название блюда'); if (!n) return; const cat = (S.d.cats || [])[0]; if (await run(db.from('menu_items').insert({ name: n.trim(), category_id: cat ? cat.id : null, price: 0, active: false }), 'Блюдо добавлено (выключено, пока не задана цена)')) loadTab('menu'); },
   delCat: async (el) => { if (ask('Удалить категорию? Блюда останутся без категории.') && await run(db.from('categories').delete().eq('id', el.dataset.id))) loadTab('menu'); },
@@ -617,7 +606,6 @@ document.addEventListener('change', async (e) => {
     if (await run(db.from('certificates').update({ file_url: url }).eq('id', el.dataset.up), 'Файл загружен')) loadTab('certs'); return;
   }
   if (el.dataset.cf) { const v = el.value.trim(); if (el.dataset.cf === 'name' && v.length < 2) return; await run(db.from('clients').update({ [el.dataset.cf]: v || null }).eq('id', S.client.c.id), 'Сохранено'); S.client.c[el.dataset.cf] = v; return; }
-  if (el.dataset.pf) { await run(db.from('client_prices').update({ price: Number(el.value) }).eq('client_id', S.client.c.id).eq('item_id', el.dataset.pf), 'Цена сохранена'); return; }
   if (el.dataset.t === 'settings') { await run(db.from('settings').update({ value: el.value.trim() }).eq('key', el.dataset.key), 'Сохранено'); return; }
   if (el.dataset.t) {
     let v = el.dataset.b ? (el.dataset.inv ? !el.checked : el.checked) : el.dataset.n ? Number(el.value) : el.value.trim();
