@@ -11,7 +11,7 @@ const linkFor = (token) => location.origin + '/?t=' + token;
 const newToken = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 const STATUSES = { new: 'Новая', accepted: 'Принята', cooking: 'Готовится', delivering: 'В пути', done: 'Выполнен', cancelled: 'Отменён', failed: 'Не передана' };
-const TABS = [['dashboard', 'Дашборд'], ['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
+const ALL_TABS = [['dashboard', 'Дашборд'], ['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
 const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const startISO = (s) => new Date(s + 'T00:00:00').toISOString();
@@ -28,7 +28,10 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const S = { user: null, tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, menuOnly: false, clientFilter: '', nStop: 0, nSleep: 0 };
+const MANAGER_TABS = ['orders', 'menu', 'feedback'];
+const isMgr = () => S.role === 'manager';
+const tabsFor = () => ALL_TABS.filter(([k]) => !isMgr() || MANAGER_TABS.includes(k));
+const S = { user: null, role: 'admin', tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, menuOnly: false, clientFilter: '', nStop: 0, nSleep: 0 };
 
 function note(msg, err) { S.msg = err ? null : msg; S.err = err ? msg : null; render(); if (msg) setTimeout(() => { if (S.msg === msg || S.err === msg) { S.msg = S.err = null; render(); } }, 4000); }
 async function api(path, body) {
@@ -45,6 +48,11 @@ async function run(p, okMsg) { const { data, error } = await p; if (error) { not
 async function loadTab(tab = S.tab) {
   const d = S.d;
   if (tab === 'orders') {
+    if (isMgr()) {
+      d.orders = (await db.rpc('staff_orders', { p_from: startISO(S.from), p_to: endISO(S.to), p_client: S.orderClient ? Number(S.orderClient) : null })).data || [];
+      if (!d.clients) d.clients = (await db.rpc('staff_clients')).data || [];
+      return render();
+    }
     let q = db.from('orders').select('*, clients(name), order_items(name,qty,price)').gte('created_at', startISO(S.from)).lt('created_at', endISO(S.to)).order('created_at', { ascending: false }).limit(2000);
     if (S.orderClient) q = q.eq('client_id', S.orderClient);
     d.orders = (await q).data || [];
@@ -59,16 +67,17 @@ async function loadTab(tab = S.tab) {
     ]);
     d.dash = { cur: cur.data || [], prev: prev.data || [], len, error: cur.error ? cur.error.message : null };
   }
-  if (tab === 'feedback') d.feedback = (await db.from('feedback').select('*, clients(name)').order('created_at', { ascending: false }).limit(300)).data || [];
+  if (tab === 'feedback' && isMgr()) { d.feedback = (await db.rpc('staff_feedback')).data || []; S.newFb = d.feedback.filter((f) => f.status === 'new').length; }
+  else if (tab === 'feedback') d.feedback = (await db.from('feedback').select('*, clients(name)').order('created_at', { ascending: false }).limit(300)).data || [];
   if (tab === 'requests') d.requests = (await db.from('registration_requests').select('*').order('created_at', { ascending: false }).limit(100)).data || [];
   if (tab === 'clients') d.clients = (await db.from('client_overview').select('*').order('name')).data || [];
   if (tab === 'menu') {
     d.cats = (await db.from('categories').select('*').order('sort').order('id')).data || [];
     d.items = (await db.from('menu_items').select('*').order('sort').order('id')).data || [];
-    const cfgRows = (await db.from('integration_settings').select('key,value')).data || [];
+    const cfgRows = isMgr() ? [] : ((await db.from('integration_settings').select('key,value')).data || []);
     d.cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
     d.syncLast = d.cfg.iiko_menu_last || null;
-    if (!d.iikoLists) setTimeout(loadIikoLists, 0);
+    if (!d.iikoLists && !isMgr()) setTimeout(loadIikoLists, 0);
   }
   if (tab === 'certs') d.certs = (await db.from('certificates').select('*').order('sort').order('id')).data || [];
   if (tab === 'settings') d.settings = (await db.from('settings').select('*').order('key')).data || [];
@@ -80,6 +89,7 @@ async function loadIikoLists() {
   if (S.tab === 'menu') render();
 }
 async function countNew() {
+  if (isMgr()) { S.newFb = ((await db.rpc('staff_feedback')).data || []).filter((f) => f.status === 'new').length; return; }
   const r = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = r.count || 0;
   const f = await db.from('feedback').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newFb = f.count || 0;
   const st = await db.from('client_overview').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('stop_list', true); S.nStop = st.count || 0;
@@ -197,11 +207,11 @@ function ordersTab() {
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><b>${esc(o.clients ? o.clients.name : '')}</b><span class="spacer"></span><b class="geo">${fmt(o.total)}</b></div>
       <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}${o.comment ? ' · «' + esc(o.comment) + '»' : ''}</div>
       <div>${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
-      ${o.iiko_error ? `<div class="red">iiko: ${esc(o.iiko_error)}</div>` : ''}
-      <div class="row">${sel(STATUSES, o.status, `data-act="orderStatus" data-id="${o.id}"`)}
-        <span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span>
-        ${!o.iiko_order_id && o.status !== 'cancelled' ? `<button class="btn o" data-act="resend" data-id="${o.id}">${o.status === 'failed' || o.iiko_error ? 'Отправить в iiko заново' : 'Отправить в iiko'}</button>` : ''}<span class="spacer"></span>
-        <button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">За выбранный период заказов нет</div>'}`;
+      ${o.iiko_error && !isMgr() ? `<div class="red">iiko: ${esc(o.iiko_error)}</div>` : ''}
+      <div class="row">${isMgr() ? `<span class="pill">${esc(STATUSES[o.status] || o.status)}</span>` : sel(STATUSES, o.status, `data-act="orderStatus" data-id="${o.id}"`)}
+        ${isMgr() ? '' : `<span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span>`}
+        ${!isMgr() && !o.iiko_order_id && o.status !== 'cancelled' ? `<button class="btn o" data-act="resend" data-id="${o.id}">${o.status === 'failed' || o.iiko_error ? 'Отправить в iiko заново' : 'Отправить в iiko'}</button>` : ''}<span class="spacer"></span>
+        ${isMgr() ? '' : `<button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button>`}</div></div>`).join('') : '<div class="card muted">За выбранный период заказов нет</div>'}`;
 }
 
 function requestsTab() {
@@ -286,7 +296,7 @@ function feedbackTab() {
       <b>${esc(f.clients ? f.clients.name : '')}</b><span class="spacer"></span><span class="muted">${fdt(f.created_at)}</span></div>
     <div style="white-space:pre-wrap">${esc(f.message)}</div>
     <div class="row">${f.status === 'new' ? `<button class="btn" data-act="fbRead" data-id="${f.id}">Прочитано</button>` : '<span class="muted">прочитано</span>'}
-      <span class="spacer"></span><button class="btn d" data-act="fbDel" data-id="${f.id}">Удалить</button></div></div>`).join('') : '<div class="card muted">Пока ничего нет</div>'}`;
+      <span class="spacer"></span>${isMgr() ? '' : `<button class="btn d" data-act="fbDel" data-id="${f.id}">Удалить</button>`}</div></div>`).join('') : '<div class="card muted">Пока ничего нет</div>'}`;
 }
 
 /* ---------- меню из Excel ---------- */
@@ -391,13 +401,13 @@ function menuTab() {
   const groups = cats.filter((c) => c.active).slice().sort((a, b) => a.sort - b.sort || a.id - b.id).map((c) => ({ c, rows: real.filter((i) => i.category_id === c.id && keep(i)) }));
   const loose = real.filter((i) => !cats.some((c) => c.active && c.id === i.category_id) && keep(i));
   const catOpts = Object.fromEntries([['', '— без категории —'], ...cats.map((c) => [c.id, c.name])]);
-  return `<div class="row"><h1>Меню</h1><span class="spacer"></span><button class="btn" data-act="newItem">+ Блюдо</button></div>
-  ${iikoSyncCard()}
+  return `<div class="row"><h1>Меню</h1><span class="spacer"></span>${isMgr() ? '' : '<button class="btn" data-act="newItem">+ Блюдо</button>'}</div>
+  ${isMgr() ? '' : iikoSyncCard()}
   <div class="msg">На сайте: <b>${shown}</b> из ${real.length} · убрано: <b>${hidden}</b> · без цены: <b>${noPrice}</b></div>
   <label class="row muted"><input type="checkbox" data-act="menuOnly" ${S.menuOnly ? 'checked' : ''}> Только убранные и без цены</label>
   ${groups.filter((g) => g.rows.length).map((g) => `<div class="mcat"><div class="mhead"><i style="background:${esc(g.c.color)}"></i>${esc(g.c.name)}</div>${g.rows.map(dishRow).join('')}</div>`).join('')}
   ${loose.length ? `<div class="mcat"><div class="mhead"><i style="background:#a8a2a0"></i>Без категории</div>${loose.map(dishRow).join('')}</div>` : ''}
-  <details class="card"><summary><b>Дополнительно</b> <span class="muted">категории, порядок блюд, iiko ID, импорт из Excel</span></summary>
+  ${isMgr() ? '' : `<details class="card"><summary><b>Дополнительно</b> <span class="muted">категории, порядок блюд, iiko ID, импорт из Excel</span></summary>
   <div style="display:grid;gap:14px;margin-top:12px">
   <div class="row"><button class="btn g" data-act="newCat">+ Категория</button></div>
   ${excelCard()}
@@ -414,7 +424,7 @@ function menuTab() {
       <td><input type="checkbox" data-t="menu_items" data-id="${i.id}" data-c="active" data-b="1" ${i.active ? 'checked' : ''}></td>
       <td><input type="text" data-t="menu_items" data-id="${i.id}" data-c="iiko_id" data-nullable="1" value="${esc(i.iiko_id || '')}" style="width:140px"></td>
       <td><button class="btn d" data-act="delItem" data-id="${i.id}">×</button>${i.image_url ? ` <button class="btn d" data-act="delPhoto" data-id="${i.id}" title="Убрать фото">фото ×</button>` : ''}</td></tr>`).join('')}</table></div>
-  </div></details>`;
+  </div></details>`}`;
 }
 
 function certsTab() {
@@ -455,9 +465,9 @@ function render() {
       <button class="btn o" type="submit">Войти</button></form></div>`;
     return;
   }
-  const body = { dashboard: dashboardTab, orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab]();
+  const body = (isMgr() && !MANAGER_TABS.includes(S.tab) ? () => '' : { dashboard: dashboardTab, orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab])();
   app.innerHTML = `<header class="bar"><div class="bar-in"><span class="brand">Tasty Gourmet</span>
-    ${TABS.map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}${k === 'requests' && S.newReq ? `<span class="n">${S.newReq}</span>` : ''}${k === 'feedback' && S.newFb ? `<span class="n">${S.newFb}</span>` : ''}</button>`).join('')}
+    ${tabsFor().map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}${k === 'requests' && S.newReq ? `<span class="n">${S.newReq}</span>` : ''}${k === 'feedback' && S.newFb ? `<span class="n">${S.newFb}</span>` : ''}</button>`).join('')}
     <span class="spacer"></span><span class="muted">${esc(S.user.email)}</span><button class="btn g" data-act="logout">Выйти</button></div></header>
     <main>${S.msg ? `<div class="msg">${esc(S.msg)}</div>` : ''}${S.err ? `<div class="msg err">${esc(S.err)}</div>` : ''}${body}</main>`;
   if (keep) { const el = document.getElementById(keep); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} } }
@@ -532,7 +542,7 @@ const A = {
   from: async (el) => { if (!el.value) return; S.from = el.value; if (S.to < S.from) S.to = S.from; await reloadRange(); },
   to: async (el) => { if (!el.value) return; S.to = el.value; if (S.from > S.to) S.from = S.to; await reloadRange(); },
   orderClientFilter: async (el) => { S.orderClient = el.value; await loadTab('orders'); },
-  fbRead: async (el) => { if (await run(db.from('feedback').update({ status: 'read' }).eq('id', el.dataset.id))) { await countNew(); loadTab('feedback'); } },
+  fbRead: async (el) => { if (await run(isMgr() ? db.rpc('staff_feedback_read', { p_id: Number(el.dataset.id) }) : db.from('feedback').update({ status: 'read' }).eq('id', el.dataset.id))) { await countNew(); loadTab('feedback'); } },
   fbDel: async (el) => { if (ask('Удалить сообщение?') && await run(db.from('feedback').delete().eq('id', el.dataset.id), 'Удалено')) { await countNew(); loadTab('feedback'); } },
   logout: async () => { await db.auth.signOut(); S.user = null; render(); },
   orderStatus: async (el) => { if (await run(db.from('orders').update({ status: el.value }).eq('id', el.dataset.id), 'Статус обновлён')) loadTab('orders'); },
@@ -633,9 +643,11 @@ document.addEventListener('focusout', () => { tip.style.display = 'none'; });
 async function boot() {
   const { data } = await db.auth.getSession();
   if (!data.session) { S.user = null; render(); return; }
-  const adm = await db.from('admins').select('user_id').eq('user_id', data.session.user.id);
+  const adm = await db.from('admins').select('user_id,role').eq('user_id', data.session.user.id);
+  if (adm.data && adm.data.length) S.role = adm.data[0].role === 'manager' ? 'manager' : 'admin';
   if (!adm.data || !adm.data.length) { await db.auth.signOut(); S.user = null; S.err = 'У этого пользователя нет доступа к админ-панели'; render(); return; }
   S.user = data.session.user; S.err = null;
+  if (isMgr()) S.tab = 'orders';
   await countNew(); await loadTab();
 }
 S.user = undefined; render(); boot();

@@ -1,0 +1,6 @@
+-- Роль «менеджер»: только заказы (просмотр), меню (просмотр и правка, без удаления), отзывы (просмотр, «прочитано»).
+-- Применено в Supabase как миграция manager_role. Выдача доступа:
+--   1) Supabase → Authentication → Users → Add user (email + пароль);
+--   2) insert into public.admins (user_id, role) select id, 'manager' from auth.users where email = '<email>';
+-- is_admin() теперь true только для role='admin'; менеджер читает заказы/клиентов/отзывы через функции staff_*
+-- (ссылки клиентов ему не видны). Подробности политик — в миграции.
