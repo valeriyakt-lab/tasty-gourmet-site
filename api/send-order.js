@@ -54,16 +54,30 @@ module.exports = async (req, res) => {
       const pt = types.find((t) => String(t.name).toLowerCase() === w) || types.find((t) => String(t.name).toLowerCase().includes(w)) || types.find((t) => t.paymentTypeKind === 'Card');
       if (pt) payload.order.payments = [{ paymentTypeKind: pt.paymentTypeKind || 'Card', sum: Number(order.total), paymentTypeId: pt.id, isProcessedExternally: false }];
     }
+    // касса должна быть в сети: иначе iiko принимает команду, но заказ на кассе не появляется
+    const alive = await iiko('/api/1/terminal_groups/is_alive', { organizationIds: [ids.org], terminalGroupIds: [ids.tg] }).catch(() => null);
+    const st0 = alive && (alive.isAliveStatus || [])[0];
+    if (st0 && st0.isAlive === false) throw new Error('Касса iiko не в сети (терминал отключён). Включите кассу и отправьте заказ заново.');
     const r = await iiko('/api/1/deliveries/create', payload);
     const iikoId = (r.orderInfo && r.orderInfo.id) || r.correlationId || 'ok';
     // как в старом сценарии: ждём, пока касса примет команду (до 6 проверок), и сообщаем об ошибке, если она есть
-    for (let i = 0; i < 6 && r.correlationId; i++) {
+    let confirmed = !r.correlationId;
+    for (let i = 0; i < 8 && r.correlationId && !confirmed; i++) {
       await sleep(Number(process.env.IIKO_POLL_MS === undefined ? 2000 : process.env.IIKO_POLL_MS));
       const st = await iiko('/api/1/commands/status', { organizationId: ids.org, correlationId: r.correlationId }).catch(() => null);
       if (!st || st.state === 'InProgress') continue;
       if (st.state !== 'Success') throw new Error('iiko: ' + ((st.exception && st.exception.message) || JSON.stringify(st.exception || st)));
-      break;
+      confirmed = true;
     }
+    // убеждаемся, что заказ действительно создан в iiko
+    if (r.orderInfo && r.orderInfo.id) {
+      const chk = await iiko('/api/1/deliveries/by_id', { organizationId: ids.org, orderIds: [r.orderInfo.id] }).catch(() => null);
+      const o = chk && (chk.orders || [])[0];
+      if (o && o.creationStatus === 'Error') throw new Error('iiko не создал заказ: ' + ((o.errorInfo && (o.errorInfo.message || o.errorInfo.description)) || 'неизвестная ошибка'));
+      if (o && o.creationStatus === 'InProgress') confirmed = false;
+      else if (o && o.creationStatus === 'Success') confirmed = true;
+    }
+    if (!confirmed) throw new Error('iiko не подтвердил создание заказа (возможно, касса недоступна). Проверьте iikoWeb; если заказа там нет, отправьте заново.');
     await sb('orders?id=eq.' + order.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ iiko_order_id: String(iikoId), iiko_error: null, status: ['new', 'failed'].includes(order.status) ? 'accepted' : order.status }) });
     let notified = 0;
     try { notified = await notifyClient(order, phone); } catch (e) { /* подтверждение клиенту не должно ломать передачу заказа */ }
