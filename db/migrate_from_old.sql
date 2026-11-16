@@ -145,7 +145,7 @@ end $$;
 select
   (select count(*) from public.clients where legacy_id is not null) as клиентов,
   (select count(*) from public.clients where legacy_id is not null and stop_list) as в_стоп_листе,
-  (select count(*) from public.client_overview where legacy_id is not null and status = 'active' and sleeping) as ссылок_спит,
+  (select count(*) from public.clients c where c.legacy_id is not null and c.status = 'active' and public.client_sleeping(c.id)) as ссылок_спит,
   (select count(*) from public.client_addresses) as адресов,
   (select count(*) from public.orders where legacy_id is not null) as заказов,
   (select count(*) from public.order_items oi join public.orders o on o.id = oi.order_id where o.legacy_id is not null and oi.item_id is null) as позиций_без_блюда_в_меню,
