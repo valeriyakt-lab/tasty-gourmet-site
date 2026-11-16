@@ -1,5 +1,5 @@
 'use strict';
-const { sb, adminFromRequest, telegram, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, notifyClient } = require('./_lib');
+const { sb, staffFromRequest, telegram, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, notifyClient } = require('./_lib');
 
 // Передача заказа на кассу iiko.
 // Вызывает сайт (после оформления заказа клиентом) или администратор (кнопка «Отправить в iiko»).
@@ -8,7 +8,7 @@ module.exports = async (req, res) => {
   let order = null;
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-    const admin = await adminFromRequest(req);
+    const admin = await staffFromRequest(req);
     const sel = '*,clients(name,phone,access_token),order_items(name,qty,price,menu_items(iiko_id,price))';
     if (admin) {
       const q = body.order_id ? 'id=eq.' + encodeURIComponent(body.order_id) : 'number=eq.' + encodeURIComponent(body.number || '');
