@@ -3,5 +3,8 @@
     "api/*.js": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/sync-statuses", "schedule": "0 18 * * *" }
+  ]
 }
