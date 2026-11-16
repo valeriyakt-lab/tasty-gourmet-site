@@ -10,7 +10,7 @@ const fdt = (iso) => { const d = new Date(iso); return d.toLocaleDateString('ru-
 const linkFor = (token) => location.origin + '/?t=' + token;
 const newToken = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
 
-const STATUSES = { new: 'Новая', accepted: 'Принята', cooking: 'Готовится', delivering: 'В пути', done: 'Выполнен', cancelled: 'Отменён', failed: 'Не передана' };
+const STATUSES = { new: 'Новая', accepted: 'Принята', done: 'Выполнен', cancelled: 'Отменён', failed: 'Не передана' };   // статусы приходят из iiko, вручную не меняются
 const ALL_TABS = [['dashboard', 'Дашборд'], ['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
 const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
@@ -48,6 +48,7 @@ async function run(p, okMsg) { const { data, error } = await p; if (error) { not
 async function loadTab(tab = S.tab) {
   const d = S.d;
   if (tab === 'orders') {
+    if (!S.noSync) { S.noSync = true; await api('/api/sync-statuses', {}); setTimeout(() => { S.noSync = false; }, 15000); }
     if (isMgr()) {
       d.orders = (await db.rpc('staff_orders', { p_from: startISO(S.from), p_to: endISO(S.to), p_client: S.orderClient ? Number(S.orderClient) : null })).data || [];
       if (!d.clients) d.clients = (await db.rpc('staff_clients')).data || [];
@@ -208,7 +209,7 @@ function ordersTab() {
       <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}${o.comment ? ' · «' + esc(o.comment) + '»' : ''}</div>
       <div>${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
       ${o.iiko_error ? `<div class="red">iiko: ${esc(isMgr() ? o.iiko_error.replace(/[0-9a-f]{32}/gi, '…') : o.iiko_error)}</div>` : ''}
-      <div class="row">${isMgr() ? `<span class="pill">${esc(STATUSES[o.status] || o.status)}</span>` : sel(STATUSES, o.status, `data-act="orderStatus" data-id="${o.id}"`)}
+      <div class="row"><span class="pill" style="background:${o.status === 'failed' ? '#f6e3e4' : o.status === 'done' ? '#e7f2eb' : '#efece7'}">${esc(STATUSES[o.status] || o.status)}</span>
         ${isMgr() ? '' : `<span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span>`}
         ${!o.iiko_order_id && o.status !== 'cancelled' ? `<button class="btn o" data-act="resend" data-id="${o.id}">${o.status === 'failed' || o.iiko_error ? 'Отправить в iiko заново' : 'Отправить в iiko'}</button>` : ''}<span class="spacer"></span>
         ${isMgr() ? '' : `<button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button>`}</div></div>`).join('') : '<div class="card muted">За выбранный период заказов нет</div>'}`;
@@ -545,7 +546,6 @@ const A = {
   fbRead: async (el) => { if (await run(isMgr() ? db.rpc('staff_feedback_read', { p_id: Number(el.dataset.id) }) : db.from('feedback').update({ status: 'read' }).eq('id', el.dataset.id))) { await countNew(); loadTab('feedback'); } },
   fbDel: async (el) => { if (ask('Удалить сообщение?') && await run(db.from('feedback').delete().eq('id', el.dataset.id), 'Удалено')) { await countNew(); loadTab('feedback'); } },
   logout: async () => { await db.auth.signOut(); S.user = null; render(); },
-  orderStatus: async (el) => { if (await run(db.from('orders').update({ status: el.value }).eq('id', el.dataset.id), 'Статус обновлён')) loadTab('orders'); },
   delOrder: async (el) => { if (ask('Удалить заказ?') && await run(db.from('orders').delete().eq('id', el.dataset.id), 'Заказ удалён')) loadTab('orders'); },
   approve: async (el) => {
     const r = S.d.requests.find((x) => x.id == el.dataset.id); if (!r) return;
