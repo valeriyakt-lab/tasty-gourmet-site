@@ -28,7 +28,7 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const MANAGER_TABS = ['orders', 'menu', 'feedback'];
+const MANAGER_TABS = ['requests', 'orders', 'menu', 'feedback'];
 const isMgr = () => S.role === 'manager';
 const tabsFor = () => ALL_TABS.filter(([k]) => !isMgr() || MANAGER_TABS.includes(k));
 const S = { user: null, role: 'admin', tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, menuOnly: false, clientFilter: '', nStop: 0, nSleep: 0 };
@@ -89,8 +89,8 @@ async function loadIikoLists() {
   if (S.tab === 'menu') render();
 }
 async function countNew() {
-  if (isMgr()) { S.newFb = ((await db.rpc('staff_feedback')).data || []).filter((f) => f.status === 'new').length; return; }
   const r = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = r.count || 0;
+  if (isMgr()) { S.newFb = ((await db.rpc('staff_feedback')).data || []).filter((f) => f.status === 'new').length; return; }
   const f = await db.from('feedback').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newFb = f.count || 0;
   const st = await db.from('client_overview').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('stop_list', true); S.nStop = st.count || 0;
   const sl = await db.from('client_overview').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('sleeping', true); S.nSleep = sl.count || 0;
@@ -207,10 +207,10 @@ function ordersTab() {
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><b>${esc(o.clients ? o.clients.name : '')}</b><span class="spacer"></span><b class="geo">${fmt(o.total)}</b></div>
       <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}${o.comment ? ' · «' + esc(o.comment) + '»' : ''}</div>
       <div>${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
-      ${o.iiko_error && !isMgr() ? `<div class="red">iiko: ${esc(o.iiko_error)}</div>` : ''}
+      ${o.iiko_error ? `<div class="red">iiko: ${esc(isMgr() ? o.iiko_error.replace(/[0-9a-f]{32}/gi, '…') : o.iiko_error)}</div>` : ''}
       <div class="row">${isMgr() ? `<span class="pill">${esc(STATUSES[o.status] || o.status)}</span>` : sel(STATUSES, o.status, `data-act="orderStatus" data-id="${o.id}"`)}
         ${isMgr() ? '' : `<span class="muted">${o.iiko_order_id ? 'iiko: ' + esc(o.iiko_order_id) : 'не передан в iiko'}</span>`}
-        ${!isMgr() && !o.iiko_order_id && o.status !== 'cancelled' ? `<button class="btn o" data-act="resend" data-id="${o.id}">${o.status === 'failed' || o.iiko_error ? 'Отправить в iiko заново' : 'Отправить в iiko'}</button>` : ''}<span class="spacer"></span>
+        ${!o.iiko_order_id && o.status !== 'cancelled' ? `<button class="btn o" data-act="resend" data-id="${o.id}">${o.status === 'failed' || o.iiko_error ? 'Отправить в iiko заново' : 'Отправить в iiko'}</button>` : ''}<span class="spacer"></span>
         ${isMgr() ? '' : `<button class="btn d" data-act="delOrder" data-id="${o.id}">Удалить</button>`}</div></div>`).join('') : '<div class="card muted">За выбранный период заказов нет</div>'}`;
 }
 
@@ -221,7 +221,7 @@ function requestsTab() {
       <span class="pill">${{ new: 'новая', approved: 'одобрена', rejected: 'отклонена' }[r.status]}</span></div>
     <div class="muted">${esc(r.address || 'адрес не указан')}${r.contact_person ? ' · контакт: ' + esc(r.contact_person) : ''}</div>
     ${r.status === 'new' ? `<div class="row"><button class="btn" data-act="approve" data-id="${r.id}">Одобрить и создать клиента</button><button class="btn d" data-act="reject" data-id="${r.id}">Отклонить</button></div>` : ''}
-    ${r.status === 'approved' && r.client_id ? `<div><button class="btn g" data-act="openClient" data-id="${r.client_id}">Открыть клиента</button></div>` : ''}
+    ${r.status === 'approved' && r.client_id && !isMgr() ? `<div><button class="btn g" data-act="openClient" data-id="${r.client_id}">Открыть клиента</button></div>` : ''}
   </div>`).join('') : '<div class="card muted">Заявок нет</div>'}`;
 }
 
@@ -549,12 +549,21 @@ const A = {
   delOrder: async (el) => { if (ask('Удалить заказ?') && await run(db.from('orders').delete().eq('id', el.dataset.id), 'Заказ удалён')) loadTab('orders'); },
   approve: async (el) => {
     const r = S.d.requests.find((x) => x.id == el.dataset.id); if (!r) return;
+    if (isMgr()) {
+      if (!ask('Одобрить заявку и создать клиента?')) return;
+      const x = await api('/api/request-decision', { id: r.id, action: 'approve' });
+      if (!x.ok) return note(x.error || 'Не удалось одобрить', true);
+      await countNew(); await loadTab('requests');
+      window.prompt('Клиент создан. Скопируйте личную ссылку и отправьте клиенту:', x.link || '');
+      return;
+    }
     const c = await run(db.from('clients').insert({ name: r.name, phone: r.phone, contact_person: r.contact_person }).select().single()); if (!c) return;
     if (r.address) await run(db.from('client_addresses').insert({ client_id: c.id, address: r.address }));
     await run(db.from('registration_requests').update({ status: 'approved', client_id: c.id }).eq('id', r.id));
     await countNew(); await openClientTab(c.id); note('Клиент создан. Скопируйте личную ссылку и отправьте в WhatsApp.');
   },
-  reject: async (el) => { if (ask('Отклонить заявку?') && await run(db.from('registration_requests').update({ status: 'rejected' }).eq('id', el.dataset.id))) { await countNew(); loadTab('requests'); } },
+  reject: async (el) => { if (isMgr()) { if (!ask('Отклонить заявку?')) return; const x = await api('/api/request-decision', { id: Number(el.dataset.id), action: 'reject' }); if (!x.ok) return note(x.error || 'Не удалось отклонить', true); await countNew(); return loadTab('requests'); }
+    if (ask('Отклонить заявку?') && await run(db.from('registration_requests').update({ status: 'rejected' }).eq('id', el.dataset.id))) { await countNew(); loadTab('requests'); } },
   filter: (el) => { S.statusFilter = el.value; render(); },
   openClient: (el) => openClientTab(el.dataset.id),
   backClients: async () => { S.client = null; await loadTab('clients'); },

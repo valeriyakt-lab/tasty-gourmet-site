@@ -30,6 +30,18 @@ async function adminFromRequest(req) {
   return rows && rows.length ? u : null;
 }
 
+// Сотрудник админки: админ или менеджер (менеджеру разрешены заявки на регистрацию и повторная отправка заказа в iiko)
+async function staffFromRequest(req) {
+  const h = req.headers.authorization || '';
+  if (!h.startsWith('Bearer ')) return null;
+  const r = await fetch(SB_URL + '/auth/v1/user', { headers: { apikey: need(SB_KEY, 'SUPABASE_SERVICE_ROLE_KEY'), Authorization: h } });
+  if (!r.ok) return null;
+  const u = await r.json();
+  if (!u || !u.id) return null;
+  const rows = await sb('admins?select=user_id,role&user_id=eq.' + encodeURIComponent(u.id));
+  return rows && rows.length ? { ...u, role: rows[0].role } : null;
+}
+
 // Подпись, с какого сайта пришло уведомление (у вас два сайта и один чат)
 const siteLabel = () => '🆕 ' + (process.env.TELEGRAM_SITE_LABEL || 'Новый сайт Tasty Gourmet');
 const siteUrl = () => (process.env.SITE_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? 'https://' + process.env.VERCEL_PROJECT_PRODUCTION_URL : '')).replace(/\/$/, '');
@@ -152,4 +164,4 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const normPhone = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 11 ? '+7' + d.slice(1) : d.length === 10 ? '+7' + d : null; };
 
-module.exports = { sb, adminFromRequest, telegram, tgCall, webhookSecret, decideRequest, siteUrl, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, notifyClient, need };
+module.exports = { sb, adminFromRequest, staffFromRequest, telegram, tgCall, webhookSecret, decideRequest, siteUrl, iiko, iikoIds, iikoConfigured, parseAddress, sleep, normPhone, notifyClient, need };
