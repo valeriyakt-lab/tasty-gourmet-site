@@ -449,7 +449,7 @@ const actions = {
   },
   logout: () => { S.cartReady = false; clearTimeout(S.cartTimer); store.del(TOKEN_KEY); S.token = null; S.data = null; S.gate = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
   toMenu: () => { S.view = 'menu'; render(); },
-  toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); },
+  toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); fetch('/api/sync-statuses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token }) }).then((r) => r.json()).then((j) => { if (j && j.changed) return load(); }).catch(() => {}); },
   toFeedback: () => { S.view = 'feedback'; render(); window.scrollTo({ top: 0 }); },
   fbKind: (el) => { S.fbText = val('fbText') || S.fbText; S.fbKind = el.dataset.v; S.fbError = ''; render(); },
   fbRate: (el) => { S.fbText = val('fbText') || S.fbText; S.fbRating = Number(el.dataset.v); render(); },
