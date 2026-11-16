@@ -27,6 +27,12 @@ module.exports = async (req, res) => {
       return res.status(admin ? 400 : 200).json({ ok: !admin, skipped: 'iiko_not_configured', error: admin ? 'iiko не настроен: добавьте IIKO_API_LOGIN в переменные окружения Vercel' : undefined });
     }
 
+    // защита от двойной отправки: браузер клиента и страж в базе могут прийти одновременно
+    const cutoff = new Date(Date.now() - 90000).toISOString();
+    const claim = await sb('orders?id=eq.' + order.id + '&iiko_order_id=is.null&or=(sending_at.is.null,sending_at.lt.' + cutoff + ')', { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ sending_at: new Date().toISOString(), send_attempts: Number(order.send_attempts || 0) + 1 }) });
+    if (!claim || !claim.length) return res.status(200).json({ ok: true, busy: true });
+    if (body.watchdog && Number(order.send_attempts || 0) >= 3) throw new Error('Автоматическая отправка не удалась с нескольких попыток');
+
     const missing = order.order_items.filter((i) => !(i.menu_items && i.menu_items.iiko_id)).map((i) => i.name);
     if (missing.length) throw new Error('У блюд не задан iiko ID: ' + missing.join(', '));
 
@@ -78,7 +84,7 @@ module.exports = async (req, res) => {
       else if (o && o.creationStatus === 'Success') confirmed = true;
     }
     if (!confirmed) throw new Error('iiko не подтвердил создание заказа (возможно, касса недоступна). Проверьте iikoWeb; если заказа там нет, отправьте заново.');
-    await sb('orders?id=eq.' + order.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ iiko_order_id: String(iikoId), iiko_error: null, status: ['new', 'failed'].includes(order.status) ? 'accepted' : order.status }) });
+    await sb('orders?id=eq.' + order.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ sending_at: null, iiko_order_id: String(iikoId), iiko_error: null, status: ['new', 'failed'].includes(order.status) ? 'accepted' : order.status }) });
     let notified = 0;
     try { notified = await notifyClient(order, phone); } catch (e) { /* подтверждение клиенту не должно ломать передачу заказа */ }
     return res.status(200).json({ ok: true, iiko_order_id: String(iikoId), client_notified: notified });
@@ -86,7 +92,7 @@ module.exports = async (req, res) => {
     const msg = e.message || String(e);
     let tg = null;
     if (order) {
-      try { await sb('orders?id=eq.' + order.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'failed', iiko_error: msg.slice(0, 500) }) }); } catch (e2) { /* ошибку базы сообщит Telegram ниже */ }
+      try { await sb('orders?id=eq.' + order.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'failed', sending_at: null, iiko_error: msg.slice(0, 500) }) }); } catch (e2) { /* ошибку базы сообщит Telegram ниже */ }
     }
     tg = await telegram(['⚠️ Заказ не попал на кассу', order ? 'Заказ № ' + order.number + (order.clients ? ' · ' + order.clients.name : '') : 'Заказ не определён', 'Причина: ' + msg, order ? 'Отправьте заново в админ-панели (вкладка «Заказы»).' : ''].filter(Boolean).join('\n'));
     return res.status(e.config ? 500 : 502).json({ ok: false, error: msg, telegram: tg });
