@@ -1,5 +1,5 @@
 'use strict';
-const { sb, staffFromRequest, iiko, iikoIds, iikoConfigured } = require('./_lib');
+const { sb, staffFromRequest, telegram, iiko, iikoIds, iikoConfigured } = require('./_lib');
 
 // Статусы заказов берутся только из iiko. Вызывается при открытии «Заказов» в админке и «Мои заказы» у клиента
 // (клиент передаёт свою ссылку и обновляет только свои заказы). Не чаще раза в 20 секунд.
@@ -24,7 +24,7 @@ module.exports = async (req, res) => {
     await sb('integration_settings', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ key: 'status_sync_at', value: Date.now(), updated_at: new Date().toISOString() }) });
 
     const since = new Date(Date.now() - (cron ? 10 : 5) * 86400000).toISOString();
-    const rows = (await sb('orders?select=id,status,iiko_order_id&iiko_order_id=not.is.null&status=in.(new,accepted)&created_at=gte.' + since + clientFilter + '&order=created_at.desc&limit=' + (cron ? 200 : 60))) || [];
+    const rows = (await sb('orders?select=id,number,status,iiko_order_id&iiko_order_id=not.is.null&status=in.(new,accepted)&created_at=gte.' + since + clientFilter + '&order=created_at.desc&limit=' + (cron ? 200 : 60))) || [];
     const list = rows.filter((o) => /^[0-9a-f-]{36}$/i.test(o.iiko_order_id));
     if (!list.length) return res.status(200).json({ ok: true, checked: 0, changed: 0 });
 
@@ -42,6 +42,7 @@ module.exports = async (req, res) => {
           if (next === 'failed') patch.iiko_error = 'iiko не создал заказ: ' + ((x.errorInfo && (x.errorInfo.message || x.errorInfo.description)) || 'неизвестная ошибка');
           await sb('orders?id=eq.' + o.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(patch) });
           changed++;
+          if (next === 'failed') await telegram(['⚠️ Заказ не принят кассой iiko', 'Заказ № ' + (o.number || o.id), 'Причина: ' + patch.iiko_error.replace('iiko не создал заказ: ', ''), 'Проверьте и отправьте заново в админке (вкладка «Заказы»).'].join('\n')).catch(() => {});
         }
       }
     }
