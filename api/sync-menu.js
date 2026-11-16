@@ -68,20 +68,32 @@ async function syncMenu() {
 
   const mine = Object.fromEntries(items.map((i) => [i.iiko_id, i]));
   const seen = new Set(), res = { prices: [], hidden: [], restored: [], added: [], noPrice: [], total: fromIiko.length };
+  const idsNow = new Set(fromIiko.map((x) => x.id));
+  const byNameFree = new Map();
+  for (const i of items) { if (idsNow.has(i.iiko_id)) continue; const k = key(i.name); if (!byNameFree.has(k)) byNameFree.set(k, []); byNameFree.get(k).push(i); }
+  const rebinds = [];
   const priceUpdates = [], restoreIds = [], toAdd = [], photoUpdates = [];
   for (const x of fromIiko) {
     seen.add(x.id);
-    const it = mine[x.id];
+    let it = mine[x.id];
+    if (!it) {
+      // в другом недельном меню iiko у того же блюда другой ID: ищем по названию и перепривязываем, а не плодим дубли
+      const byName = byNameFree.get(key(x.name));
+      if (byName && byName.length) { it = byName.shift(); rebinds.push({ id: it.id, iiko_id: x.id }); it = { ...it, iiko_id: x.id }; }
+    }
     if (!it) { toAdd.push(x); continue; }
     if (x.price > 0) { if (Number(it.price) !== x.price) { priceUpdates.push({ id: it.id, price: x.price }); res.prices.push(it.name + ': ' + Number(it.price) + ' → ' + x.price); } }
     else res.noPrice.push(it.name);
     if (!it.active && it.sync_hidden) { restoreIds.push(it.id); res.restored.push(it.name); }
     if (x.image && !it.image_url) photoUpdates.push({ id: it.id, image_url: x.image });
   }
-  const hideIds = items.filter((i) => i.active && !seen.has(i.iiko_id));
+  const reboundIds = new Set(rebinds.map((r) => r.id));
+  const hideIds = items.filter((i) => i.active && !seen.has(i.iiko_id) && !reboundIds.has(i.id));
   hideIds.forEach((i) => res.hidden.push(i.name));
 
   const patch = (q, body) => sb('menu_items?' + q, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(body) });
+  for (const r of rebinds) await patch('id=eq.' + r.id, { iiko_id: r.iiko_id });
+  res.rebound = rebinds.length;
   for (let i = 0; i < priceUpdates.length; i += 10) await Promise.all(priceUpdates.slice(i, i + 10).map((u) => patch('id=eq.' + u.id, { price: u.price, updated_at: new Date().toISOString() })));
   res.photos = photoUpdates.length;
   for (let i = 0; i < photoUpdates.length; i += 10) await Promise.all(photoUpdates.slice(i, i + 10).map((u) => patch('id=eq.' + u.id, { image_url: u.image_url })));
@@ -89,7 +101,7 @@ async function syncMenu() {
   if (hideIds.length) await patch('id=in.(' + hideIds.map((i) => i.id).join(',') + ')', { active: false, sync_hidden: true });
 
   if (toAdd.length) {
-    const cats = ((await sb('categories?select=id,name&order=id')) || []).map((c) => ({ id: c.id, k: ckey(c.name) }));
+    const cats = ((await sb('categories?select=id,name&active=eq.true&order=id')) || []).map((c) => ({ id: c.id, k: ckey(c.name) }));
     const catId = {};
     let sort = 1000;
     for (const x of toAdd) {
