@@ -26,7 +26,7 @@ async function adminFromRequest(req) {
   if (!r.ok) return null;
   const u = await r.json();
   if (!u || !u.id) return null;
-  const rows = await sb('admins?select=user_id&user_id=eq.' + encodeURIComponent(u.id));
+  const rows = await sb('admins?select=user_id&role=eq.admin&user_id=eq.' + encodeURIComponent(u.id));
   return rows && rows.length ? u : null;
 }
 
