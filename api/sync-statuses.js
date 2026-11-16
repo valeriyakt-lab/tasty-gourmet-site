@@ -8,10 +8,11 @@ const map = (s) => (done.has(s) ? 'done' : s === 'Cancelled' ? 'cancelled' : 'ac
 
 module.exports = async (req, res) => {
   try {
-    if (req.method !== 'POST') return res.status(405).json({ ok: false });
+    const cron = !!process.env.CRON_SECRET && req.headers.authorization === 'Bearer ' + process.env.CRON_SECRET;   // ночной запуск Vercel Cron
+    if (req.method !== 'POST' && !cron) return res.status(405).json({ ok: false });
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
     let clientFilter = '';
-    if (!(await staffFromRequest(req))) {
+    if (!cron && !(await staffFromRequest(req))) {
       const c = body.token ? ((await sb('clients?select=id&access_token=eq.' + encodeURIComponent(String(body.token)))) || [])[0] : null;
       if (!c) return res.status(401).json({ ok: false, error: 'unauthorized' });
       clientFilter = '&client_id=eq.' + c.id;
@@ -19,11 +20,11 @@ module.exports = async (req, res) => {
     if (!iikoConfigured()) return res.status(200).json({ ok: true, skipped: 'iiko_not_configured' });
 
     const last = ((await sb('integration_settings?select=value&key=eq.status_sync_at')) || [])[0];
-    if (last && Date.now() - Number(last.value) < 20000) return res.status(200).json({ ok: true, skipped: 'recent' });
+    if (!cron && last && Date.now() - Number(last.value) < 20000) return res.status(200).json({ ok: true, skipped: 'recent' });
     await sb('integration_settings', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ key: 'status_sync_at', value: Date.now(), updated_at: new Date().toISOString() }) });
 
-    const since = new Date(Date.now() - 5 * 86400000).toISOString();
-    const rows = (await sb('orders?select=id,status,iiko_order_id&iiko_order_id=not.is.null&status=in.(new,accepted)&created_at=gte.' + since + clientFilter + '&order=created_at.desc&limit=60')) || [];
+    const since = new Date(Date.now() - (cron ? 10 : 5) * 86400000).toISOString();
+    const rows = (await sb('orders?select=id,status,iiko_order_id&iiko_order_id=not.is.null&status=in.(new,accepted)&created_at=gte.' + since + clientFilter + '&order=created_at.desc&limit=' + (cron ? 200 : 60))) || [];
     const list = rows.filter((o) => /^[0-9a-f-]{36}$/i.test(o.iiko_order_id));
     if (!list.length) return res.status(200).json({ ok: true, checked: 0, changed: 0 });
 
