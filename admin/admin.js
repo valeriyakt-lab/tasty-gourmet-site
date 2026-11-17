@@ -112,12 +112,15 @@ async function openClient(id) {
 /* ---------- вкладки ---------- */
 const sel = (opts, cur, attrs) => `<select ${attrs}>${Object.entries(opts).map(([k, v]) => `<option value="${esc(k)}" ${String(k) === String(cur) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
 
+const MGR_DAYS = 14;   // менеджер видит заказы не старше 14 дней
+const mgrMin = () => ymd(addDays(new Date(), -(MGR_DAYS - 1)));
 function rangeBar() {
+  if (isMgr() && S.from < mgrMin()) S.from = mgrMin();
   const cur = Object.keys(PRESETS).find((k) => { const r = presetRange(k); return r[0] === S.from && r[1] === S.to; });
   return `<div class="card"><div class="row">
-    ${Object.entries(PRESETS).map(([k, n]) => `<button class="btn ${cur === k ? '' : 'g'}" data-act="preset" data-v="${k}">${n}</button>`).join('')}
+    ${Object.entries(PRESETS).filter(([k]) => !isMgr() || !['d30', 'month'].includes(k)).map(([k, n]) => `<button class="btn ${cur === k ? '' : 'g'}" data-act="preset" data-v="${k}">${n}</button>`).join('')}
     <span class="spacer"></span>
-    <label class="row muted">С <input type="date" data-act="from" value="${S.from}" max="${S.to}"></label>
+    <label class="row muted">С <input type="date" data-act="from" value="${S.from}" max="${S.to}" ${isMgr() ? `min="${mgrMin()}"` : ''}></label>
     <label class="row muted">по <input type="date" data-act="to" value="${S.to}" min="${S.from}"></label></div></div>`;
 }
 const periodLabel = () => (S.from === S.to ? S.from.split('-').reverse().join('.') : S.from.split('-').reverse().join('.') + ' — ' + S.to.split('-').reverse().join('.'));
@@ -540,7 +543,7 @@ const A = {
   checkTg: async () => { S.checkMsg = 'Проверяем…'; render(); const r = await api('/api/check', { what: 'telegram' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
   checkIiko: async () => { S.checkMsg = 'Проверяем…'; render(); const r = await api('/api/check', { what: 'iiko' }); S.checkMsg = r.message || r.error || 'Нет ответа'; render(); },
   preset: async (el) => { [S.from, S.to] = presetRange(el.dataset.v); await reloadRange(); },
-  from: async (el) => { if (!el.value) return; S.from = el.value; if (S.to < S.from) S.to = S.from; await reloadRange(); },
+  from: async (el) => { if (!el.value) return; S.from = isMgr() && el.value < mgrMin() ? mgrMin() : el.value; if (S.to < S.from) S.to = S.from; await reloadRange(); },
   to: async (el) => { if (!el.value) return; S.to = el.value; if (S.from > S.to) S.from = S.to; await reloadRange(); },
   orderClientFilter: async (el) => { S.orderClient = el.value; await loadTab('orders'); },
   fbRead: async (el) => { if (await run(isMgr() ? db.rpc('staff_feedback_read', { p_id: Number(el.dataset.id) }) : db.from('feedback').update({ status: 'read' }).eq('id', el.dataset.id))) { await countNew(); loadTab('feedback'); } },
