@@ -424,11 +424,19 @@ function render() {
 }
 
 /* ---------- действия ---------- */
-function tokenFromText(t) {
-  t = String(t || '').trim();
-  const m = t.match(/[?&#](?:t|k|key|token)=([A-Za-z0-9_-]{16,128})/i);
-  return m ? m[1] : /^[A-Za-z0-9_-]{20,128}$/.test(t) ? t : null;
+// Ссылка могла прийти из WhatsApp с переносами строк, пробелами или невидимыми символами внутри: убираем их.
+function tokenCandidates(t) {
+  t = String(t || '').replace(/[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060\uFEFF\u00AD]/g, '');
+  try { t = decodeURIComponent(t); } catch (e) { /* оставляем как есть */ }
+  const c = t.replace(/\s+/g, ''), out = [];
+  const add = (x) => { if (x && !out.includes(x)) out.push(x); };
+  const m = c.match(/[?&#](?:t|k|key|token)=([A-Za-z0-9_-]{16,128})/i);
+  if (m) add(m[1]);
+  if (/^[A-Za-z0-9_-]{20,128}$/.test(c)) add(c);
+  (c.replace(/https?:\/\/[^/?#]+/ig, '').match(/[A-Za-z0-9_-]{20,128}/g) || []).forEach(add);
+  return out;
 }
+function tokenFromText(t) { return tokenCandidates(t)[0] || null; }
 const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
 
 // Меню меняется каждый день, поэтому повтор берёт сегодняшние блюда и цены.
@@ -439,7 +447,16 @@ const repeatBlocked = (o, addr) => isToday(o.created_at) && !['failed', 'cancell
 const actions = {
   tab: (el) => { S.authTab = el.dataset.v; render(); },
   retryLoad: () => load(),
-  loginLink: () => { const t = tokenFromText(val('linkIn')); if (!t) { S.fatal = 'Не удалось распознать ссылку.'; render(); return; } S.token = t; store.set(TOKEN_KEY, t); load(); },
+  loginLink: async () => {
+    const cands = tokenCandidates(val('linkIn')).slice(0, 4);
+    const bad = () => { S.fatal = 'Не удалось распознать ссылку. Откройте ссылку из WhatsApp целиком (нажмите на неё) или попросите новую у менеджера' + (settings().manager_phone ? ': ' + settings().manager_phone : '') + '.'; render(); };
+    if (!cands.length) return bad();
+    for (const c of cands) {
+      let d = null; try { d = await rpc('shop_data', { p_token: c }); } catch (e) { d = null; }
+      if (d) { S.token = c; store.set(TOKEN_KEY, c); S.fatal = null; await load(); return; }
+    }
+    bad();
+  },
   sendReg: async () => {
     S.regError = '';
     try {
