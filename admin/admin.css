@@ -89,3 +89,5 @@ label.f{display:grid;gap:4px;font-size:12px;color:#6e696a;font-weight:500}
 .mhide{display:flex;align-items:center;gap:6px;font-size:13px;color:#6e696a;white-space:nowrap}
 details.card summary{cursor:pointer}
 @media(max-width:700px){.mrow{grid-template-columns:minmax(0,1fr) 90px;grid-template-areas:'n n' 'p h';}.mrow .mname{grid-area:n}.mrow .mphoto{display:none}.mrow .mprice{grid-area:p}.mrow .mhide{grid-area:h}}
+
+.mnum{display:inline-block;min-width:26px;color:#008037;font-weight:600;font-variant-numeric:tabular-nums}

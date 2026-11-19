@@ -217,7 +217,7 @@ function dishCard(it) {
   const q = S.qty[it.id];
   return `<article class="dish" style="box-shadow:${q ? 'inset 0 0 0 2px #008037' : 'none'}">
     ${dishPhoto(it)}
-    <div class="dish-name">${it.n ? `<span class="dnum">${it.n}.</span> ` : ''}${esc(it.name)}</div>
+    <div class="dish-name">${esc(it.name)}</div>
     <div class="dish-row"><div class="price">${fmt(it.price)}</div>
     ${q ? `<div class="stepper"><button class="m" data-act="dec" data-id="${it.id}" aria-label="Убрать">−</button>
         <input type="text" inputmode="numeric" value="${q}" data-chg="qty" data-id="${it.id}" aria-label="Количество">
@@ -229,7 +229,7 @@ function dishCard(it) {
 
 function menuView() {
   const q = norm(S.q.trim());
-  const secs = S.data.menu.map((c, i) => ({ c, i, items: c.items.map((it, k) => ({ ...it, n: k + 1 })).filter((it) => !q || norm(it.name).includes(q)) })).filter((s) => s.items.length);
+  const secs = S.data.menu.map((c, i) => ({ c, i, items: c.items.filter((it) => !q || norm(it.name).includes(q)) })).filter((s) => s.items.length);
   const sc = sched();
   const certs = S.data.certificates;
   const stopped = S.data.client.stopped;
