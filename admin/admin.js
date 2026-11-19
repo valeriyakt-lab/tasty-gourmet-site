@@ -90,6 +90,7 @@ async function loadIikoLists() {
   if (S.tab === 'menu') render();
 }
 async function countNew() {
+  const oo = await db.from('settings').select('value').eq('key', 'orders_open'); S.ordersOpen = !(oo.data && oo.data[0] && oo.data[0].value === '0');
   const r = await db.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newReq = r.count || 0;
   if (isMgr()) { S.newFb = ((await db.rpc('staff_feedback')).data || []).filter((f) => f.status === 'new').length; return; }
   const f = await db.from('feedback').select('id', { count: 'exact', head: true }).eq('status', 'new'); S.newFb = f.count || 0;
@@ -114,6 +115,11 @@ const sel = (opts, cur, attrs) => `<select ${attrs}>${Object.entries(opts).map((
 
 const MGR_DAYS = 14;   // менеджер видит заказы не старше 14 дней
 const mgrMin = () => ymd(addDays(new Date(), -(MGR_DAYS - 1)));
+function openCard() {
+  const open = S.ordersOpen !== false;
+  return `<div class="card"><div class="row"><b>Приём заказов:</b> <span class="pill" style="background:${open ? '#e7f2eb' : '#f6e3e4'};color:${open ? '#006a2e' : '#b53137'}">${open ? 'открыт' : 'закрыт'}</span><span class="muted">${open ? 'клиенты могут отправлять заявки' : 'клиенты видят «Приём заявок закрыт» и отправить заявку не могут'}</span><span class="spacer"></span>
+    <button class="btn ${open ? 'd' : ''}" data-act="toggleOrders">${open ? 'Закрыть приём заказов' : 'Открыть приём заказов'}</button></div></div>`;
+}
 function rangeBar() {
   if (isMgr() && S.from < mgrMin()) S.from = mgrMin();
   const cur = Object.keys(PRESETS).find((k) => { const r = presetRange(k); return r[0] === S.from && r[1] === S.to; });
@@ -177,6 +183,7 @@ function dashboardTab() {
   const m = dashData();
   const tbl = (head, rows) => `<details class="tv-t"><summary>Таблица значений</summary><table><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></details>`;
   return `<div class="row"><h1>Дашборд</h1><span class="spacer"></span><button class="btn g" data-act="reload">Обновить</button></div>
+  ${openCard()}
   ${rangeBar()}
   ${(() => { const bad = dd.cur.filter((o) => o.status === 'failed').length; return bad ? `<div class="msg err">Не дошли до кассы: <b>${bad}</b>. <a href="#" data-act="toFailed">Открыть и отправить заново</a></div>` : ''; })()}
   ${S.nStop || S.nSleep ? `<div class="msg" style="background:#fdf3dc;color:#6b4d0a">В стоп-листе: <b>${S.nStop}</b> · ссылка спит: <b>${S.nSleep}</b> · <a href="#" data-act="goClients" data-v="${S.nStop ? 'stop' : 'sleep'}">открыть</a>${S.nStop && S.nSleep ? ' · <a href="#" data-act="goClients" data-v="sleep">показать спящих</a>' : ''}</div>` : ''}
@@ -205,6 +212,7 @@ function ordersTab() {
   const clientOpts = Object.fromEntries([['', 'Все клиенты'], ...(S.d.clients || []).map((c) => [c.id, c.name])]);
   return `<div class="row"><h1>Заказы</h1><span class="spacer"></span>
     ${sel(clientOpts, S.orderClient, 'data-act="orderClientFilter"')}${sel({ '': 'Все статусы', ...STATUSES }, S.statusFilter, 'data-act="filter"')}<button class="btn g" data-act="reload">Обновить</button></div>
+    ${openCard()}
     ${rangeBar()}
     <div class="msg">Период: ${periodLabel()} · заказов: <b>${rows.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(rows))}</b></div>
     ${rows.length ? rows.map((o) => `<div class="card" style="${o.status === 'failed' ? 'box-shadow:inset 0 0 0 2px #b53137' : ''}">
@@ -452,7 +460,7 @@ function settingsTab() {
     <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
     <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button><button class="btn g" data-act="checkWebhook">Подключить кнопки Telegram</button></div>
     ${S.checkMsg ? `<pre class="link" style="white-space:pre-wrap">${esc(S.checkMsg)}</pre>` : ''}</div>
-  <div class="card">${(S.d.settings || []).map((s) => s.key === 'show_photos' ? `<label class="f">${esc(names[s.key])}
+  <div class="card">${(S.d.settings || []).filter((s) => s.key !== 'orders_open').map((s) => s.key === 'show_photos' ? `<label class="f">${esc(names[s.key])}
     <select data-t="settings" data-key="show_photos"><option value="1" ${s.value !== '0' ? 'selected' : ''}>Да (если у блюда есть фото)</option><option value="0" ${s.value === '0' ? 'selected' : ''}>Нет, фото не показывать</option></select></label>` : `<label class="f">${esc(names[s.key] || s.key)}
     <input type="text" data-t="settings" data-key="${esc(s.key)}" value="${esc(s.value)}"></label>`).join('')}</div>`;
 }
@@ -483,6 +491,11 @@ const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
   reload: () => loadTab(),
+  toggleOrders: async () => {
+    const open = S.ordersOpen !== false;
+    if (!ask(open ? 'Закрыть приём заказов? Клиенты не смогут отправлять заявки.' : 'Открыть приём заказов?')) return;
+    if (await run(db.rpc('staff_set_orders_open', { p_open: !open }), open ? 'Приём заказов закрыт' : 'Приём заказов открыт')) { S.ordersOpen = !open; render(); }
+  },
   clientFilter: (el) => { S.clientFilter = el.value; render(); },
   goClients: async (el) => { S.tab = 'clients'; S.client = null; S.clientFilter = el.dataset.v; await loadTab('clients'); },
   stopOn: async (el) => {
