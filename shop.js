@@ -217,6 +217,8 @@ function menuView() {
   return `<main>
     ${stopped ? stopBanner() : ''}
     ${ordersClosed() ? '<div class="closed-strip">Приём заявок временно закрыт</div>' : ''}
+    ${settings().menu_day ? `<div class="day-pill">Меню на ${esc(DAY_ACC[settings().menu_day] || settings().menu_day)}</div>` : ''}
+    ${holidayLines().length ? `<button class="holiday-strip" data-act="toSchedule">📅 ${esc(holidayLines()[0])}${holidayLines().length > 1 ? ' · ещё ' + (holidayLines().length - 1) : ''}</button>` : ''}
     ${secs.map((s) => `<section class="cat" id="cat-${s.i}">
       <h2 class="cat-h"><i style="background:${esc(s.c.color)}"></i>${esc(s.c.name)}</h2>
       <div class="grid">${s.items.map(dishCard).join('')}</div></section>`).join('')}
@@ -224,7 +226,7 @@ function menuView() {
     <footer class="foot">
       <span><b class="geo green" style="text-transform:uppercase">Tasty Gourmet</b> · более 8 лет на рынке · ежедневно отгружаем 170 точкам</span>
       <span>Менеджер: ${esc(settings().manager_phone || '')}</span>
-      <span style="flex:1 1 100%">Приём заявок: Пн–Чт до 19:00, Вс до 18:00 · Доставка: Пн–Пт 7:00–11:00 · Сб и Вс доставка не осуществляется · В праздничные дни график уточняйте у менеджера</span>
+      <span style="flex:1 1 100%">${esc([settings().schedule_orders && 'Приём заявок: ' + settings().schedule_orders, settings().schedule_delivery && 'Доставка: ' + settings().schedule_delivery, settings().schedule_weekend].filter(Boolean).join(' · '))}</span>
     </footer></main>`;
 }
 
@@ -247,6 +249,19 @@ function certCard(c) {
     ${c.file_url ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
       ${!isImg ? `<a class="btn-ghost" style="text-decoration:none" href="${esc(c.file_url)}" target="_blank" rel="noopener">Открыть</a>` : ''}
       <a class="btn-soft" style="text-decoration:none" href="${esc(dlUrl(c))}" download>Скачать</a></div>` : ''}</div></article>`;
+}
+
+const DAY_ACC = { 'Понедельник': 'понедельник', 'Вторник': 'вторник', 'Среда': 'среду', 'Четверг': 'четверг', 'Пятница': 'пятницу', 'Суббота': 'субботу', 'Воскресенье': 'воскресенье' };
+const holidayLines = () => String(settings().schedule_holidays || '').split('\n').map((x) => x.trim()).filter(Boolean);
+function scheduleView() {
+  const st = settings(), wd = (new Date().getDay() + 6) % 7, hol = holidayLines();
+  const rows = [['Приём заявок', st.schedule_orders], ['Доставка', st.schedule_delivery], ['Выходные', st.schedule_weekend]].filter((r) => r[1]);
+  const week = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((l, i) => `<span class="${i >= 5 ? 'off' : ''}${i === wd ? ' today' : ''}">${l}</span>`).join('');
+  return `<main><h2 class="geo" style="margin:16px 0 12px;font-weight:700;font-size:26px;text-transform:uppercase">График работы</h2>
+    <div class="sch-card">${rows.map((r) => `<div class="sch-row"><span class="sch-k">${esc(r[0])}</span><span class="sch-v">${esc(r[1])}</span></div>`).join('')}
+      <div class="week" aria-label="Дни недели">${week}</div></div>
+    ${hol.length ? `<div class="sch-card sch-hol"><div class="sch-h">Особые дни</div>${hol.map((h) => `<div class="sch-hr">${esc(h)}</div>`).join('')}</div>` : ''}
+    <p class="muted" style="font-size:14px">Остались вопросы? Менеджер: ${esc(st.manager_phone || '')}</p></main>`;
 }
 
 function certsView() {
@@ -377,7 +392,8 @@ function shopView() {
         ${!S.pickup ? `<select class="sel" data-chg="addr" aria-label="Адрес доставки">${S.data.addresses.map((a) => `<option value="${esc(a)}" ${a === S.addr ? 'selected' : ''}>${esc(a)}</option>`).join('')}<option value="__new">+ Новый адрес</option></select>`
           : `<span class="muted" style="font-size:14px">Кухня: ${esc(settings().pickup_address || '')}, с ${esc(settings().pickup_from || '7:00')}</span>`}
       </div>
-      <nav class="nav"><button class="link" data-act="toOrders" style="background:${S.view === 'orders' ? '#f4f3f0' : 'transparent'}">Заказы</button>
+      <nav class="nav"><button class="link" data-act="toMenu" style="background:${S.view === 'menu' ? '#f4f3f0' : 'transparent'}">Меню</button><button class="link" data-act="toOrders" style="background:${S.view === 'orders' ? '#f4f3f0' : 'transparent'}">Заказы</button>
+        <button class="link" data-act="toSchedule" style="background:${S.view === 'schedule' ? '#f4f3f0' : 'transparent'}">График</button>
         ${S.data.certificates.length ? `<button class="link" data-act="toCerts" style="background:${S.view === 'certs' ? '#f4f3f0' : 'transparent'}">Сертификаты</button>` : ''}
         <button class="link" data-act="toFeedback" style="background:${S.view === 'feedback' ? '#f4f3f0' : 'transparent'}">Отзывы</button>
         <button class="link" data-act="logout" style="color:#6e696a;font-size:14px">Выйти</button></nav>
@@ -385,7 +401,7 @@ function shopView() {
     ${isMenu ? `<div class="search-row"><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"><label class="note-box"><span>✎ Комментарий к заказу</span><input class="note" id="comment" type="text" maxlength="500" value="${esc(S.comment)}" placeholder="Ориентир, время, пожелания" aria-label="Комментарий к заказу"></label></div>` : ''}
   </header>
   ${isMenu ? `<div class="chips-bar"><div class="chips" aria-label="Категории">${chips}</div></div>` : ''}
-  ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : S.view === 'certs' ? certsView() : feedbackView()}
+  ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : S.view === 'certs' ? certsView() : S.view === 'schedule' ? scheduleView() : feedbackView()}
   ${orderBar()}
   </div>${modalView()}${reviewView()}${successView()}`;
 }
@@ -463,6 +479,7 @@ const actions = {
   logout: () => { S.cartReady = false; clearTimeout(S.cartTimer); store.del(TOKEN_KEY); S.token = null; S.data = null; S.gate = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
   toMenu: () => { S.view = 'menu'; render(); },
   toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); fetch('/api/sync-statuses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token }) }).then((r) => r.json()).then((j) => { if (j && j.changed) return load(); }).catch(() => {}); },
+  toSchedule: () => { S.view = 'schedule'; render(); window.scrollTo({ top: 0 }); },
   toCerts: () => { S.view = 'certs'; render(); window.scrollTo({ top: 0 }); },
   toFeedback: () => { S.view = 'feedback'; render(); window.scrollTo({ top: 0 }); },
   fbKind: (el) => { S.fbText = val('fbText') || S.fbText; S.fbKind = el.dataset.v; S.fbError = ''; render(); },

@@ -11,7 +11,7 @@ const linkFor = (token) => location.origin + '/?t=' + token;
 const newToken = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 const STATUSES = { new: 'Новая', accepted: 'Принята', done: 'Выполнен', cancelled: 'Отменён', failed: 'Не передана' };   // статусы приходят из iiko, вручную не меняются
-const ALL_TABS = [['dashboard', 'Дашборд'], ['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
+const ALL_TABS = [['dashboard', 'Дашборд'], ['requests', 'Заявки'], ['orders', 'Заказы'], ['clients', 'Клиенты'], ['feedback', 'Отзывы'], ['menu', 'Меню'], ['schedule', 'График'], ['certs', 'Сертификаты'], ['settings', 'Настройки']];
 const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const startISO = (s) => new Date(s + 'T00:00:00').toISOString();
@@ -28,7 +28,7 @@ function presetRange(k) {
 const counted = (o) => !['cancelled', 'failed'].includes(o.status);
 const ordersSum = (rows) => rows.filter(counted).reduce((a, o) => a + Number(o.total), 0);
 
-const MANAGER_TABS = ['requests', 'orders', 'menu', 'feedback'];
+const MANAGER_TABS = ['requests', 'orders', 'menu', 'schedule', 'feedback'];
 const isMgr = () => S.role === 'manager';
 const tabsFor = () => ALL_TABS.filter(([k]) => !isMgr() || MANAGER_TABS.includes(k));
 const S = { user: null, role: 'admin', tab: 'dashboard', msg: null, err: null, d: {}, client: null, statusFilter: '', clientQ: '', fresh: null, from: ymd(addDays(new Date(), -6)), to: ymd(new Date()), orderClient: '', clientOrders: [], newFb: 0, checkMsg: '', xl: null, menuOnly: false, clientFilter: '', nStop: 0, nSleep: 0 };
@@ -79,6 +79,10 @@ async function loadTab(tab = S.tab) {
     d.cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
     d.syncLast = d.cfg.iiko_menu_last || null;
     if (!d.iikoLists && !isMgr()) setTimeout(loadIikoLists, 0);
+  }
+  if (tab === 'schedule' || tab === 'menu') {
+    const rows = (await db.from('settings').select('key,value').in('key', ['schedule_orders', 'schedule_delivery', 'schedule_weekend', 'schedule_holidays', 'menu_day'])).data || [];
+    d.sch = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   }
   if (tab === 'certs') d.certs = (await db.from('certificates').select('*').order('sort').order('id')).data || [];
   if (tab === 'settings') d.settings = (await db.from('settings').select('*').order('key')).data || [];
@@ -381,6 +385,24 @@ function iikoSyncCard() {
     ${l ? list('Изменились цены', l.prices) + list('Скрыты (нет в меню iiko)', l.hidden) + list('Возвращены в меню', l.restored) + list('Добавлены новые блюда', l.added) + list('Без цены в iiko', l.noPrice) : ''}</div>`;
 }
 
+const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
+function menuDayCard() {
+  const cur = ((S.d.sch || {}).menu_day || '').trim();
+  const opts = Object.fromEntries([['', '— не показывать —'], ...WEEKDAYS.map((d) => [d, d]), ...(cur && !WEEKDAYS.includes(cur) ? [[cur, cur]] : [])]);
+  return `<div class="card"><div class="row"><b>На какой день это меню</b>${sel(opts, cur, 'data-act="menuDay"')}</div>
+    <span class="muted">Клиенты видят над меню надпись «Меню на вторник», чтобы понимать, на какой день заказ.${isMgr() ? '' : ' Если выбираете меню из iiko с названием вроде «Неделя 3вт», день подставится сам.'}</span></div>`;
+}
+function scheduleTab() {
+  const v = S.d.sch || {};
+  return `<h1>График работы</h1>
+  <div class="card"><span class="muted">Этот текст клиенты видят на сайте во вкладке «График». Меняйте, когда меняется режим работы или есть праздничные дни.</span>
+    <label class="f">Приём заявок<input type="text" id="sch_orders" value="${esc(v.schedule_orders || '')}" placeholder="Пн–Чт до 19:00, Вс до 18:00"></label>
+    <label class="f">Доставка<input type="text" id="sch_delivery" value="${esc(v.schedule_delivery || '')}" placeholder="Пн–Пт 7:00–11:00"></label>
+    <label class="f">Выходные<input type="text" id="sch_weekend" value="${esc(v.schedule_weekend || '')}" placeholder="Сб и Вс доставка не осуществляется"></label>
+    <label class="f">Особые дни (праздники, выходные): каждая строка с новой строки<textarea id="sch_holidays" rows="5" placeholder="28–30 декабря — не работаем&#10;31 декабря — доставка осуществляется как обычно">${esc(v.schedule_holidays || '')}</textarea></label>
+    <div class="row"><button class="btn" data-act="saveSchedule">Сохранить график</button></div></div>`;
+}
+
 function excelCard() {
   const x = S.xl;
   const list = (title, arr, cls) => arr.length ? `<div><b class="${cls || ''}">${title} (${arr.length})</b><div class="muted" style="max-height:140px;overflow:auto;font-size:13px">${arr.slice(0, 60).map(esc).join('<br>')}${arr.length > 60 ? '<br>…' : ''}</div></div>` : '';
@@ -415,6 +437,7 @@ function menuTab() {
   const catOpts = Object.fromEntries([['', '— без категории —'], ...cats.map((c) => [c.id, c.name])]);
   return `<div class="row"><h1>Меню</h1><span class="spacer"></span>${isMgr() ? '' : '<button class="btn" data-act="newItem">+ Блюдо</button>'}</div>
   ${isMgr() ? '' : iikoSyncCard()}
+  ${menuDayCard()}
   <div class="msg">На сайте: <b>${shown}</b> из ${real.length} · убрано: <b>${hidden}</b> · без цены: <b>${noPrice}</b></div>
   <label class="row muted"><input type="checkbox" data-act="menuOnly" ${S.menuOnly ? 'checked' : ''}> Только убранные и без цены</label>
   ${groups.filter((g) => g.rows.length).map((g) => `<div class="mcat"><div class="mhead"><i style="background:${esc(g.c.color)}"></i>${esc(g.c.name)}</div>${(() => { let k = 0; return g.rows.map((i) => dishRow(i, i.active ? ++k : 0)).join(''); })()}</div>`).join('')}
@@ -460,7 +483,7 @@ function settingsTab() {
     <span class="muted">Ключи хранятся только в переменных окружения Vercel, здесь они не вводятся. Если заказ не попал на кассу, в Telegram придёт сообщение.</span>
     <div class="row"><button class="btn" data-act="checkTg">Проверить Telegram</button><button class="btn" data-act="checkIiko">Проверить iiko</button><button class="btn g" data-act="checkWebhook">Подключить кнопки Telegram</button></div>
     ${S.checkMsg ? `<pre class="link" style="white-space:pre-wrap">${esc(S.checkMsg)}</pre>` : ''}</div>
-  <div class="card">${(S.d.settings || []).filter((s) => s.key !== 'orders_open').map((s) => s.key === 'show_photos' ? `<label class="f">${esc(names[s.key])}
+  <div class="card">${(S.d.settings || []).filter((s) => !['orders_open', 'schedule_orders', 'schedule_delivery', 'schedule_weekend', 'schedule_holidays', 'menu_day'].includes(s.key)).map((s) => s.key === 'show_photos' ? `<label class="f">${esc(names[s.key])}
     <select data-t="settings" data-key="show_photos"><option value="1" ${s.value !== '0' ? 'selected' : ''}>Да (если у блюда есть фото)</option><option value="0" ${s.value === '0' ? 'selected' : ''}>Нет, фото не показывать</option></select></label>` : `<label class="f">${esc(names[s.key] || s.key)}
     <input type="text" data-t="settings" data-key="${esc(s.key)}" value="${esc(s.value)}"></label>`).join('')}</div>`;
 }
@@ -477,7 +500,7 @@ function render() {
       <button class="btn o" type="submit">Войти</button></form></div>`;
     return;
   }
-  const body = (isMgr() && !MANAGER_TABS.includes(S.tab) ? () => '' : { dashboard: dashboardTab, orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab])();
+  const body = (isMgr() && !MANAGER_TABS.includes(S.tab) ? () => '' : { dashboard: dashboardTab, orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab, schedule: scheduleTab }[S.tab])();
   app.innerHTML = `<header class="bar"><div class="bar-in"><span class="brand">Tasty Gourmet</span>
     ${tabsFor().map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}${k === 'requests' && S.newReq ? `<span class="n">${S.newReq}</span>` : ''}${k === 'feedback' && S.newFb ? `<span class="n">${S.newFb}</span>` : ''}</button>`).join('')}
     <span class="spacer"></span><span class="muted">${esc(S.user.email)}</span><button class="btn g" data-act="chPwd">Сменить пароль</button><button class="btn g" data-act="logout">Выйти</button></div></header>
@@ -496,6 +519,12 @@ const A = {
     const { error } = await db.auth.updateUser({ password: p });
     if (error) return note(error.message, true);
     note('Пароль изменён');
+  },
+  menuDay: async (el) => { if (await run(db.rpc('staff_set_setting', { p_key: 'menu_day', p_value: el.value }), el.value ? 'Меню на ' + el.value.toLowerCase() : 'Надпись о дне меню убрана')) { (S.d.sch = S.d.sch || {}).menu_day = el.value; render(); } },
+  saveSchedule: async () => {
+    const pairs = [['schedule_orders', 'sch_orders'], ['schedule_delivery', 'sch_delivery'], ['schedule_weekend', 'sch_weekend'], ['schedule_holidays', 'sch_holidays']];
+    for (const [k, id] of pairs) { if (!(await run(db.rpc('staff_set_setting', { p_key: k, p_value: val(id).trim() })))) return; }
+    note('График сохранён: клиенты увидят его на сайте'); await loadTab('schedule');
   },
   reload: () => loadTab(),
   toggleOrders: async () => {
@@ -517,6 +546,11 @@ const A = {
     body.priceCategoryId = val('priceCatSel'); body.newDishes = val('newSel');
     el.disabled = true; el.textContent = 'Обновляем…';
     const r = await api('/api/sync-menu', body);
+    if (r.ok) {
+      const so = document.getElementById('menuSel'), nm = so && so.selectedOptions && so.selectedOptions[0] ? so.selectedOptions[0].text : '';
+      const dm = /(?:^|[^а-яёa-z])(пн|вт|ср|чт|пт|сб|вс)\.?[\s»"')]*$/i.exec(nm);
+      if (dm) { const day = { пн: 'Понедельник', вт: 'Вторник', ср: 'Среда', чт: 'Четверг', пт: 'Пятница', сб: 'Суббота', вс: 'Воскресенье' }[dm[1].toLowerCase()]; await db.rpc('staff_set_setting', { p_key: 'menu_day', p_value: day }); }
+    }
     if (r.ok) note(`Меню обновлено: цен изменено ${r.prices.length}, скрыто ${r.hidden.length}, возвращено ${r.restored.length}, новых ${r.added.length}${r.photos ? ', фото ' + r.photos : ''}`);
     else note('Не удалось: ' + (r.error || 'ошибка'), true);
     await loadTab('menu');
