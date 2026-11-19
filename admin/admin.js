@@ -396,10 +396,10 @@ function excelCard() {
       <div class="row"><button class="btn o" data-act="xlApply" ${x.plan.add.length + x.plan.upd.length + x.plan.hide.length ? '' : 'disabled'}>Применить</button><button class="btn g" data-act="xlCancel">Отмена</button></div>` : ''}</div>`;
 }
 
-function dishRow(i) {
+function dishRow(i, n) {
   const off = !i.active, noPrice = !(Number(i.price) > 0);
   return `<div class="mrow" style="${off ? 'opacity:.6' : ''}">
-    <div class="mname">${esc(i.name)}${off && i.sync_hidden ? ' <span class="pill">нет в меню iiko</span>' : ''}${noPrice ? ' <span class="pill" style="background:#f6e3e4;color:#b53137">без цены</span>' : ''}</div>
+    <div class="mname">${n ? `<span class="mnum">${n}.</span> ` : '<span class="mnum" style="color:#a8a2a0">—</span> '}${esc(i.name)}${off && i.sync_hidden ? ' <span class="pill">нет в меню iiko</span>' : ''}${noPrice ? ' <span class="pill" style="background:#f6e3e4;color:#b53137">без цены</span>' : ''}</div>
     <div class="mphoto">${i.image_url ? `<img src="${esc(i.image_url)}" alt="">` : ''}<label class="btn g sm">${i.image_url ? 'Фото' : '+ фото'}<input type="file" accept="image/*" data-dish-up="${i.id}" hidden></label></div>
     <input type="number" min="0" class="mprice" data-t="menu_items" data-id="${i.id}" data-c="price" data-n="1" data-reload="1" value="${i.price}">
     <label class="mhide"><input type="checkbox" data-t="menu_items" data-id="${i.id}" data-c="active" data-b="1" data-inv="1" data-reload="1" ${off ? 'checked' : ''}> Убрать с сайта</label></div>`;
@@ -417,8 +417,8 @@ function menuTab() {
   ${isMgr() ? '' : iikoSyncCard()}
   <div class="msg">На сайте: <b>${shown}</b> из ${real.length} · убрано: <b>${hidden}</b> · без цены: <b>${noPrice}</b></div>
   <label class="row muted"><input type="checkbox" data-act="menuOnly" ${S.menuOnly ? 'checked' : ''}> Только убранные и без цены</label>
-  ${groups.filter((g) => g.rows.length).map((g) => `<div class="mcat"><div class="mhead"><i style="background:${esc(g.c.color)}"></i>${esc(g.c.name)}</div>${g.rows.map(dishRow).join('')}</div>`).join('')}
-  ${loose.length ? `<div class="mcat"><div class="mhead"><i style="background:#a8a2a0"></i>Без категории</div>${loose.map(dishRow).join('')}</div>` : ''}
+  ${groups.filter((g) => g.rows.length).map((g) => `<div class="mcat"><div class="mhead"><i style="background:${esc(g.c.color)}"></i>${esc(g.c.name)}</div>${(() => { let k = 0; return g.rows.map((i) => dishRow(i, i.active ? ++k : 0)).join(''); })()}</div>`).join('')}
+  ${loose.length ? `<div class="mcat"><div class="mhead"><i style="background:#a8a2a0"></i>Без категории</div>${loose.map((i) => dishRow(i, 0)).join('')}</div>` : ''}
   ${isMgr() ? '' : `<details class="card"><summary><b>Дополнительно</b> <span class="muted">категории, порядок блюд, iiko ID, импорт из Excel</span></summary>
   <div style="display:grid;gap:14px;margin-top:12px">
   <div class="row"><button class="btn g" data-act="newCat">+ Категория</button></div>
