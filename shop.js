@@ -357,7 +357,7 @@ function orderBar() {
     ${S.cartError && !S.review ? `<div class="err">${esc(S.cartError)}</div>` : ''}
     ${short ? `<div style="font-size:14px;color:#b53137;line-height:1.3">До минимальной суммы доставки ${fmt(min)} осталось ${fmt(min - sum)}</div>` : ''}
     <div class="obar-row">
-      <div class="obar-sum"><span class="muted" style="font-size:13px">${cnt} шт · ${lines.length} поз.</span><b class="geo" style="font-size:22px;font-variant-numeric:tabular-nums;display:block">${fmt(sum)}</b></div>
+      <div class="obar-sum"><span class="muted" style="font-size:13px">${cnt} шт · ${lines.length} поз. · <button class="obar-clear" data-act="clearCart">Очистить корзину</button></span><b class="geo" style="font-size:22px;font-variant-numeric:tabular-nums;display:block">${fmt(sum)}</b></div>
       <button class="btn btn-orange" data-act="submit" ${short || S.sending || off ? 'disabled' : ''} style="padding:15px 22px;font-size:16px;white-space:nowrap">Отправить заявку</button>
     </div></div></div>`;
 }
@@ -480,6 +480,11 @@ const actions = {
   toMenu: () => { S.view = 'menu'; render(); },
   toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); fetch('/api/sync-statuses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token }) }).then((r) => r.json()).then((j) => { if (j && j.changed) return load(); }).catch(() => {}); },
   toSchedule: () => { S.view = 'schedule'; render(); window.scrollTo({ top: 0 }); },
+  clearCart: () => {
+    if (S.sending) return;
+    if (!window.confirm('Очистить корзину полностью? Все выбранные блюда и комментарий будут удалены.')) return;
+    S.qty = {}; S.pend = {}; S.comment = ''; S.idem = null; S.cartError = ''; S.cartNotice = ''; S.cartInfo = ''; S.cartOpen = false; S.review = false; render();
+  },
   toCerts: () => { S.view = 'certs'; render(); window.scrollTo({ top: 0 }); },
   toFeedback: () => { S.view = 'feedback'; render(); window.scrollTo({ top: 0 }); },
   fbKind: (el) => { S.fbText = val('fbText') || S.fbText; S.fbKind = el.dataset.v; S.fbError = ''; render(); },
