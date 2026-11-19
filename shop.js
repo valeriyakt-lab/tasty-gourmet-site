@@ -102,14 +102,6 @@ async function restoreCart() {
 
 /* ---------- график работы ---------- */
 const ordersClosed = () => String((settings() || {}).orders_open) === '0';
-function sched() {
-  // Статус «открыт / закрыт» зависит только от кнопки в админке, а не от времени. График работы — справочная подпись.
-  const wd = (new Date().getDay() + 6) % 7;
-  const T = ordersClosed() ? ['Приём заявок временно закрыт', '#fbe9de', '#c95614'] : ['Приём заявок открыт', '#e7f2eb', '#008037'];
-  const week = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((l, i) =>
-    `<span style="background:${i >= 5 ? 'transparent' : '#fff'};color:${i >= 5 ? '#a8a2a0' : '#393536'};box-shadow:${i === wd ? 'inset 0 0 0 2px ' + T[2] : i >= 5 ? 'inset 0 0 0 1px #d9d5d0' : 'none'}">${l}</span>`).join('');
-  return { title: T[0], bg: T[1], fg: T[2], week };
-}
 
 /* ---------- заказы ---------- */
 const STATUS = {
@@ -145,7 +137,7 @@ function cartLines() {
   return Object.keys(S.qty).filter((id) => items[id]).map((id) => ({ ...items[id], qty: S.qty[id] }));
 }
 function scrollToCat(i) {
-  const el = document.getElementById('cat-' + i), h = document.querySelector('header.top');
+  const el = document.getElementById('cat-' + i), h = document.querySelector('.chips-bar');
   if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - (h ? h.getBoundingClientRect().height : 0) - 4, behavior: 'smooth' });
 }
 
@@ -222,19 +214,11 @@ function dishCard(it) {
 function menuView() {
   const q = norm(S.q.trim());
   const secs = S.data.menu.map((c, i) => ({ c, i, items: c.items.filter((it) => !q || norm(it.name).includes(q)) })).filter((s) => s.items.length);
-  const sc = sched();
   const certs = S.data.certificates;
   const stopped = S.data.client.stopped;
   return `<main>
     ${stopped ? stopBanner() : ''}
-    <div class="sched" style="background:${sc.bg}">
-      <div style="display:grid;gap:2px;min-width:0">
-        <div class="geo" style="font-weight:600;font-size:16px;color:${sc.fg}">${sc.title}</div>
-        <div class="muted" style="font-size:14px">Приём заявок: Пн–Чт до 19:00, Вс до 18:00 · Доставка: Пн–Пт 7:00–11:00 · Сб и Вс доставка не осуществляется</div>
-        <div class="muted" style="font-size:13px">В праздничные дни график уточняйте у менеджера</div>
-      </div>
-      <div class="week" aria-label="График работы">${sc.week}</div>
-    </div>
+    ${ordersClosed() ? '<div class="closed-strip">Приём заявок временно закрыт</div>' : ''}
     ${secs.map((s) => `<section class="cat" id="cat-${s.i}">
       <h2 class="cat-h"><i style="background:${esc(s.c.color)}"></i>${esc(s.c.name)}</h2>
       <div class="grid">${s.items.map(dishCard).join('')}</div></section>`).join('')}
@@ -245,6 +229,7 @@ function menuView() {
     <footer class="foot">
       <span><b class="geo green" style="text-transform:uppercase">Tasty Gourmet</b> · более 8 лет на рынке · ежедневно отгружаем 170 точкам</span>
       <span>Менеджер: ${esc(settings().manager_phone || '')}</span>
+      <span style="flex:1 1 100%">Приём заявок: Пн–Чт до 19:00, Вс до 18:00 · Доставка: Пн–Пт 7:00–11:00 · Сб и Вс доставка не осуществляется · В праздничные дни график уточняйте у менеджера</span>
     </footer></main>`;
 }
 
@@ -376,7 +361,7 @@ function shopView() {
   const seg = (on) => `background:${on ? '#fff' : 'transparent'};color:${on ? '#393536' : '#6e696a'};box-shadow:${on ? '0 1px 3px rgba(57,53,54,.15)' : 'none'}`;
   const isMenu = S.view === 'menu';
   const chips = S.data.menu.map((c, i) => { const k = c.items.filter((it) => S.qty[it.id]).length, on = i === S.active, col = esc(c.color);
-    return `<button class="chip" data-act="goCat" data-id="${i}" style="border-color:${col};background:${on ? col : '#fff'};color:${on ? '#fff' : col}">${esc(c.name)}${k ? `<b style="background:${on ? '#fff' : col};color:${on ? col : '#fff'}">${k}</b>` : ''}</button>`; }).join('');
+    return `<button class="chip${on ? ' on' : ''}" data-act="goCat" data-id="${i}" style="border-color:${col};background:${on ? col : '#fff'};color:${on ? '#fff' : col}">${esc(c.name)}${k ? `<b style="background:${on ? '#fff' : col};color:${on ? col : '#fff'}">${k}</b>` : ''}</button>`; }).join('');
   return `<div class="page"><header class="top">
     <div class="top-row">
       <div style="display:grid;gap:2px"><button class="logo" data-act="toMenu">Tasty Gourmet</button>
@@ -388,11 +373,11 @@ function shopView() {
       </div>
       <nav class="nav"><button class="link" data-act="toOrders" style="background:${S.view === 'orders' ? '#f4f3f0' : 'transparent'}">Мои заказы</button>
         <button class="link" data-act="toFeedback" style="background:${S.view === 'feedback' ? '#f4f3f0' : 'transparent'}">Отзывы</button>
-        <button class="link" data-act="logout" style="color:#6e696a;font-size:14px">Выйти</button>
-        <button class="cart-btn" data-act="openCart"><span>Корзина</span>${cnt ? `<span style="display:flex;align-items:center;gap:10px"><span style="width:1px;height:18px;background:rgba(255,255,255,.45)"></span><span style="font-variant-numeric:tabular-nums">${cnt}</span></span>` : ''}</button></nav>
+        <button class="link" data-act="logout" style="color:#6e696a;font-size:14px">Выйти</button></nav>
     </div>
-    ${isMenu ? `<div class="chips">${chips}<input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"></div>` : ''}
+    ${isMenu ? `<div class="search-row"><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"></div>` : ''}
   </header>
+  ${isMenu ? `<div class="chips-bar"><div class="chips" aria-label="Категории">${chips}</div></div>` : ''}
   ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : feedbackView()}
   ${orderBar()}
   </div>${modalView()}${successView()}`;
@@ -404,10 +389,18 @@ function render() {
   try { document.body.classList.toggle('lock', !!(S.done || S.modal)); } catch (e) { /* не критично */ }
   const ae = document.activeElement;
   const keep = ae && ae.id ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd } : null;
+  const oldChips = document.querySelector('.chips'), chipsLeft = oldChips ? oldChips.scrollLeft : 0;
   if (S.loading && !S.data) app.innerHTML = '<div class="boot">Загрузка…</div>';
   else if (!S.data) app.innerHTML = authView();
   else app.innerHTML = shopView();
   persistCart();
+  // строка категорий прокручивается вбок: не сбрасываем позицию при перерисовке и показываем активную категорию
+  const chipsEl = document.querySelector('.chips');
+  if (chipsEl) {
+    chipsEl.scrollLeft = chipsLeft;
+    const on = chipsEl.querySelector('.chip.on');
+    if (on && S._chipActive !== S.active) { S._chipActive = S.active; chipsEl.scrollLeft = on.offsetLeft - (chipsEl.clientWidth - on.offsetWidth) / 2; }
+  }
   if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.s, keep.e); } catch (e) {} } }
 }
 
@@ -561,11 +554,13 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('scroll', () => {
   if (!S.data || S.view !== 'menu') return;
-  const h = document.querySelector('header.top'), top = (h ? h.getBoundingClientRect().bottom : 0) + 20;
+  const h = document.querySelector('.chips-bar'), top = (h ? h.getBoundingClientRect().bottom : 0) + 20;
   let cur = 0; S.data.menu.forEach((_, i) => { const el = document.getElementById('cat-' + i); if (el && el.getBoundingClientRect().top <= top) cur = i; });
   if (cur !== S.active) { S.active = cur; document.querySelectorAll('.chip').forEach((c, i) => {
     const col = S.data.menu[i].color, on = i === cur; c.style.background = on ? col : '#fff'; c.style.color = on ? '#fff' : col;
-    const b = c.querySelector('b'); if (b) { b.style.background = on ? '#fff' : col; b.style.color = on ? col : '#fff'; } }); }
+    c.classList.toggle('on', on); const b = c.querySelector('b'); if (b) { b.style.background = on ? '#fff' : col; b.style.color = on ? col : '#fff'; } });
+    const cs = document.querySelector('.chips'), onEl = cs && cs.querySelector('.chip.on'); S._chipActive = cur;
+    if (onEl) cs.scrollTo({ left: onEl.offsetLeft - (cs.clientWidth - onEl.offsetWidth) / 2, behavior: 'smooth' }); }
 }, { passive: true });
 
 /* передача заказа на кассу выполняется на сервере; ошибка не должна мешать клиенту */
