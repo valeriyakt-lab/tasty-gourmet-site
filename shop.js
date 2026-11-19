@@ -103,19 +103,11 @@ async function restoreCart() {
 /* ---------- график работы ---------- */
 const ordersClosed = () => String((settings() || {}).orders_open) === '0';
 function sched() {
-  const now = new Date(), wd = (now.getDay() + 6) % 7, hr = now.getHours();
-  // заявки принимаются Пн–Чт до 19:00 и в Вс до 18:00 (на понедельник); в Пт и Сб заявки не принимаются
-  const mode = wd === 4 ? 'friday' : wd === 5 ? 'weekend' : wd === 6 ? (hr < 18 ? 'sunday' : 'closed') : hr < 19 ? 'open' : 'closed';
-  const T = {
-    open: ['Приём заявок открыт до 19:00', '#e7f2eb', '#008037'],
-    sunday: ['Принимаем заявки на понедельник до 18:00', '#e7f2eb', '#008037'],
-    closed: ['Приём заявок на сегодня закрыт', '#fbe9de', '#c95614'],
-    friday: ['Сегодня заявки не принимаются. Заявки на понедельник принимаем в воскресенье до 18:00', '#fbe9de', '#c95614'],
-    weekend: ['В субботу и воскресенье доставка не осуществляется. Заявки на понедельник принимаем в воскресенье до 18:00', '#fbe9de', '#c95614'],
-  }[mode];
+  // Статус «открыт / закрыт» зависит только от кнопки в админке, а не от времени. График работы — справочная подпись.
+  const wd = (new Date().getDay() + 6) % 7;
+  const T = ordersClosed() ? ['Приём заявок временно закрыт', '#fbe9de', '#c95614'] : ['Приём заявок открыт', '#e7f2eb', '#008037'];
   const week = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((l, i) =>
     `<span style="background:${i >= 5 ? 'transparent' : '#fff'};color:${i >= 5 ? '#a8a2a0' : '#393536'};box-shadow:${i === wd ? 'inset 0 0 0 2px ' + T[2] : i >= 5 ? 'inset 0 0 0 1px #d9d5d0' : 'none'}">${l}</span>`).join('');
-  if (ordersClosed()) return { title: 'Приём заявок временно закрыт', bg: '#fbe9de', fg: '#c95614', week };
   return { title: T[0], bg: T[1], fg: T[2], week };
 }
 
