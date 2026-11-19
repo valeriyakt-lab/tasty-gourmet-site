@@ -199,16 +199,14 @@ function dishPhoto(it) {
 }
 function dishCard(it) {
   const q = S.qty[it.id];
-  return `<article class="dish" style="box-shadow:${q ? 'inset 0 0 0 2px #008037' : 'none'}">
+  return `<article class="dish dish-card" style="box-shadow:${q ? 'inset 0 0 0 2px #008037' : 'none'}">
     ${dishPhoto(it)}
-    <div class="dish-name">${esc(it.name)}</div>
-    <div class="dish-row"><div class="price">${fmt(it.price)}</div>
-    ${q ? `<div class="stepper"><button class="m" data-act="dec" data-id="${it.id}" aria-label="Убрать">−</button>
+    <div class="dish-main"><div class="dish-name">${esc(it.name)}</div><div class="price">${fmt(it.price)}</div></div>
+    <div class="dish-ctl">${q ? `<div class="stepper"><button class="m" data-act="dec" data-id="${it.id}" aria-label="Убрать">−</button>
         <input type="text" inputmode="numeric" value="${q}" data-chg="qty" data-id="${it.id}" aria-label="Количество">
         <button class="p" data-act="inc" data-id="${it.id}" aria-label="Добавить">+</button></div>`
       : `<div class="add"><input type="text" inputmode="numeric" id="pend-${it.id}" value="${esc(S.pend[it.id] || '')}" placeholder="1" data-chg="pend" data-id="${it.id}" aria-label="Количество">
-        <button data-act="add" data-id="${it.id}">Добавить</button></div>`}
-    </div></article>`;
+        <button data-act="add" data-id="${it.id}">Добавить</button></div>`}</div></article>`;
 }
 
 function menuView() {
@@ -341,8 +339,7 @@ function orderBar() {
         <button class="rm" data-act="remove" data-id="${l.id}">Убрать</button>
         <div class="stepper sm"><button class="m" data-act="dec" data-id="${l.id}" aria-label="Убрать">−</button>
           <input type="text" inputmode="numeric" value="${l.qty}" data-chg="qty" data-id="${l.id}" aria-label="Количество">
-          <button class="p" data-act="inc" data-id="${l.id}" aria-label="Добавить">+</button></div></div>`).join('')}</div>
-      <textarea id="comment" rows="2" maxlength="500" placeholder="Комментарий: ориентир, время, пожелания" class="inp" style="font-size:15px;resize:vertical;width:100%;margin-top:8px">${esc(S.comment)}</textarea></div>` : '';
+          <button class="p" data-act="inc" data-id="${l.id}" aria-label="Добавить">+</button></div></div>`).join('')}</div></div>` : '';
   return `<div class="obar"><div class="obar-in">
     ${panel}
     ${S.cartInfo ? `<div class="err" style="background:#e7f2eb;color:#006a2e">${esc(S.cartInfo)}</div>` : ''}
@@ -371,11 +368,11 @@ function shopView() {
         ${!S.pickup ? `<select class="sel" data-chg="addr" aria-label="Адрес доставки">${S.data.addresses.map((a) => `<option value="${esc(a)}" ${a === S.addr ? 'selected' : ''}>${esc(a)}</option>`).join('')}<option value="__new">+ Новый адрес</option></select>`
           : `<span class="muted" style="font-size:14px">Кухня: ${esc(settings().pickup_address || '')}, с ${esc(settings().pickup_from || '7:00')}</span>`}
       </div>
-      <nav class="nav"><button class="link" data-act="toOrders" style="background:${S.view === 'orders' ? '#f4f3f0' : 'transparent'}">Мои заказы</button>
+      <nav class="nav"><button class="link" data-act="toOrders" style="background:${S.view === 'orders' ? '#f4f3f0' : 'transparent'}">Заказы</button>
         <button class="link" data-act="toFeedback" style="background:${S.view === 'feedback' ? '#f4f3f0' : 'transparent'}">Отзывы</button>
         <button class="link" data-act="logout" style="color:#6e696a;font-size:14px">Выйти</button></nav>
     </div>
-    ${isMenu ? `<div class="search-row"><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"></div>` : ''}
+    ${isMenu ? `<div class="search-row"><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"><input class="note" id="comment" type="text" maxlength="500" value="${esc(S.comment)}" placeholder="Комментарий к заказу" aria-label="Комментарий к заказу"></div>` : ''}
   </header>
   ${isMenu ? `<div class="chips-bar"><div class="chips" aria-label="Категории">${chips}</div></div>` : ''}
   ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : feedbackView()}
@@ -390,10 +387,15 @@ function render() {
   const ae = document.activeElement;
   const keep = ae && ae.id ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd } : null;
   const oldChips = document.querySelector('.chips'), chipsLeft = oldChips ? oldChips.scrollLeft : 0;
+  const oldPanel = document.querySelector('.obar-panel'), panelTop = oldPanel ? oldPanel.scrollTop : 0, pageY = window.scrollY, sameView = S._renderedView === S.view && !!S.data;
   if (S.loading && !S.data) app.innerHTML = '<div class="boot">Загрузка…</div>';
   else if (!S.data) app.innerHTML = authView();
   else app.innerHTML = shopView();
   persistCart();
+  // после перерисовки остаёмся на том же месте страницы (раньше выкидывало наверх)
+  if (sameView && pageY > 0) window.scrollTo({ top: pageY, left: 0, behavior: 'instant' });
+  S._renderedView = S.view;
+  const newPanel = document.querySelector('.obar-panel'); if (newPanel) newPanel.scrollTop = panelTop;
   // строка категорий прокручивается вбок: не сбрасываем позицию при перерисовке и показываем активную категорию
   const chipsEl = document.querySelector('.chips');
   if (chipsEl) {
@@ -401,7 +403,7 @@ function render() {
     const on = chipsEl.querySelector('.chip.on');
     if (on && S._chipActive !== S.active) { S._chipActive = S.active; chipsEl.scrollLeft = on.offsetLeft - (chipsEl.clientWidth - on.offsetWidth) / 2; }
   }
-  if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.s, keep.e); } catch (e) {} } }
+  if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus({ preventScroll: true }); try { el.setSelectionRange(keep.s, keep.e); } catch (e) {} } }
 }
 
 /* ---------- действия ---------- */
