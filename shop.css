@@ -181,3 +181,18 @@ h2.cat-h{font-size:22px;margin:0 0 10px}
 .rv-total{display:flex;justify-content:space-between;align-items:baseline}.rv-total b{font-size:24px}
 .rv-btns{display:grid;grid-template-columns:1fr 2fr;gap:10px}.rv-btns .btn{padding:14px}
 .modal.review{width:min(480px,calc(100vw - 20px))}
+
+/* график работы и день меню */
+.day-pill{display:inline-block;margin-top:12px;border-radius:999px;padding:7px 16px;background:#008037;color:#fff;font:700 14px Geologica,sans-serif;text-transform:uppercase;letter-spacing:.03em}
+.holiday-strip{display:block;width:100%;text-align:left;margin-top:10px;border:0;border-radius:14px;padding:9px 14px;background:#fff6e8;color:#c95614;font:600 14px/1.3 Rubik,sans-serif}
+.sch-card{background:#fff;border-radius:20px;padding:14px 16px;display:grid;gap:10px;margin-bottom:12px}
+.sch-row{display:grid;grid-template-columns:130px minmax(0,1fr);gap:10px;align-items:baseline}
+.sch-k{font:600 13px Rubik,sans-serif;color:#6e696a;text-transform:uppercase;letter-spacing:.03em}
+.sch-v{font:500 16px/1.35 Rubik,sans-serif}
+.sch-card .week{margin-top:4px}
+.week span{background:#f4f3f0;color:#393536}.week span.off{background:transparent;color:#a8a2a0;box-shadow:inset 0 0 0 1px #d9d5d0}.week span.today{box-shadow:inset 0 0 0 2px #008037}
+.sch-hol{background:#fff6e8;border:1.5px solid #e0641c}
+.sch-h{font:700 14px Geologica,sans-serif;color:#c95614;text-transform:uppercase}
+.sch-hr{font:500 16px/1.35 Rubik,sans-serif}
+@media(max-width:420px){.sch-row{grid-template-columns:1fr;gap:2px}}
+@media(max-width:560px){.nav{flex:1 1 100%;max-width:100%;overflow-x:auto;scrollbar-width:none;margin-left:0}.nav::-webkit-scrollbar{display:none}.nav .link{flex:none;white-space:nowrap}}
