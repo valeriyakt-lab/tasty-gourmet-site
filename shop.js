@@ -221,9 +221,6 @@ function menuView() {
       <h2 class="cat-h"><i style="background:${esc(s.c.color)}"></i>${esc(s.c.name)}</h2>
       <div class="grid">${s.items.map(dishCard).join('')}</div></section>`).join('')}
     ${secs.length ? '' : '<p class="empty">Ничего не найдено</p>'}
-    ${certs.length ? `<section class="cat" id="certificates" style="padding-top:40px">
-      <h2 class="cat-h"><i style="background:#008037"></i>Сертификаты</h2>
-      <div class="grid certs-grid">${certs.map(certCard).join('')}</div></section>` : ''}
     <footer class="foot">
       <span><b class="geo green" style="text-transform:uppercase">Tasty Gourmet</b> · более 8 лет на рынке · ежедневно отгружаем 170 точкам</span>
       <span>Менеджер: ${esc(settings().manager_phone || '')}</span>
@@ -250,6 +247,12 @@ function certCard(c) {
     ${c.file_url ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
       ${!isImg ? `<a class="btn-ghost" style="text-decoration:none" href="${esc(c.file_url)}" target="_blank" rel="noopener">Открыть</a>` : ''}
       <a class="btn-soft" style="text-decoration:none" href="${esc(dlUrl(c))}" download>Скачать</a></div>` : ''}</div></article>`;
+}
+
+function certsView() {
+  const certs = S.data.certificates;
+  return `<main><h2 class="geo" style="margin:16px 0 12px;font-weight:700;font-size:26px;text-transform:uppercase">Сертификаты</h2>
+    <div class="grid certs-grid">${certs.map(certCard).join('')}</div></main>`;
 }
 
 function ordersView() {
@@ -332,25 +335,31 @@ function orderBar() {
   const lines = cartLines(), cnt = lines.reduce((a, l) => a + l.qty, 0), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
   if (!cnt) return '';
   const min = minDelivery(), stopped = S.data.client.stopped, short = !S.pickup && sum < min, off = stopped || ordersClosed();
-  const panel = S.cartOpen ? `<div class="obar-panel">
-      <div class="lines">${lines.map((l) => `<div class="line">
-        <div style="min-width:0"><div style="font-weight:500;line-height:1.3">${esc(l.name)}</div><div class="muted" style="font-size:13px">${fmt(l.price)} × ${l.qty}</div></div>
-        <div class="geo" style="font-weight:600;font-size:16px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right">${fmt(l.price * l.qty)}</div>
-        <button class="rm" data-act="remove" data-id="${l.id}">Убрать</button>
-        <div class="stepper sm"><button class="m" data-act="dec" data-id="${l.id}" aria-label="Убрать">−</button>
-          <input type="text" inputmode="numeric" value="${l.qty}" data-chg="qty" data-id="${l.id}" aria-label="Количество">
-          <button class="p" data-act="inc" data-id="${l.id}" aria-label="Добавить">+</button></div></div>`).join('')}</div></div>` : '';
   return `<div class="obar"><div class="obar-in">
-    ${panel}
     ${S.cartInfo ? `<div class="err" style="background:#e7f2eb;color:#006a2e">${esc(S.cartInfo)}</div>` : ''}
     ${S.cartNotice ? `<div class="err" style="background:#fdf3dc;color:#8a6410">${esc(S.cartNotice)}</div>` : ''}
     ${stopped ? `<div class="err">${esc(stopText())}</div>` : ordersClosed() ? `<div class="err">${esc(closedText())}</div>` : ''}
-    ${S.cartError ? `<div class="err">${esc(S.cartError)}</div>` : ''}
+    ${S.cartError && !S.review ? `<div class="err">${esc(S.cartError)}</div>` : ''}
     ${short ? `<div style="font-size:14px;color:#b53137;line-height:1.3">До минимальной суммы доставки ${fmt(min)} осталось ${fmt(min - sum)}</div>` : ''}
     <div class="obar-row">
-      <button class="obar-sum" data-act="openCart" aria-expanded="${S.cartOpen ? 'true' : 'false'}"><span class="muted" style="font-size:13px">${cnt} шт · ${lines.length} поз. <u>${S.cartOpen ? 'скрыть ▾' : 'список ▴'}</u></span><b class="geo" style="font-size:22px;font-variant-numeric:tabular-nums;display:block">${fmt(sum)}</b></button>
-      <button class="btn btn-orange" data-act="submit" ${short || S.sending || off ? 'disabled' : ''} style="padding:15px 22px;font-size:16px;white-space:nowrap">${S.sending ? 'Отправляем…' : 'Отправить заявку'}</button>
+      <div class="obar-sum"><span class="muted" style="font-size:13px">${cnt} шт · ${lines.length} поз.</span><b class="geo" style="font-size:22px;font-variant-numeric:tabular-nums;display:block">${fmt(sum)}</b></div>
+      <button class="btn btn-orange" data-act="submit" ${short || S.sending || off ? 'disabled' : ''} style="padding:15px 22px;font-size:16px;white-space:nowrap">Отправить заявку</button>
     </div></div></div>`;
+}
+
+// Компактная проверка заявки перед отправкой: что заказано, сколько, на какую сумму
+function reviewView() {
+  if (!S.review) return '';
+  const lines = cartLines(), cnt = lines.reduce((a, l) => a + l.qty, 0), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
+  return `<div class="shade" style="z-index:50" data-act="backReview"></div><div class="modal review" role="dialog" aria-label="Проверьте заявку">
+    <div class="modal-h"><div class="geo" style="font-weight:700;font-size:20px;text-transform:uppercase">Проверьте заявку</div><button class="x" data-act="backReview" aria-label="Закрыть">×</button></div>
+    <div class="rv-where">${S.pickup ? 'Самовывоз: ' + esc(settings().pickup_address || '') : 'Доставка: ' + esc(S.addr)}</div>
+    <div class="rv-list">${lines.map((l) => `<div class="rv-row"><span class="rv-n">${esc(l.name)}</span><span class="rv-q">× ${l.qty}</span><span class="rv-s">${fmt(l.price * l.qty)}</span></div>`).join('')}</div>
+    ${S.comment ? `<div class="rv-comment"><b>Комментарий:</b> ${esc(S.comment)}</div>` : ''}
+    <div class="rv-total"><span class="muted">${cnt} шт · ${lines.length} поз.</span><b class="geo">${fmt(sum)}</b></div>
+    ${S.cartError ? `<div class="err">${esc(S.cartError)}</div>` : ''}
+    <div class="rv-btns"><button class="btn btn-ghost" data-act="backReview">Назад</button>
+      <button class="btn btn-orange" data-act="confirmSend" ${S.sending ? 'disabled' : ''}>${S.sending ? 'Отправляем…' : 'Подтвердить'}</button></div></div>`;
 }
 
 function shopView() {
@@ -369,21 +378,22 @@ function shopView() {
           : `<span class="muted" style="font-size:14px">Кухня: ${esc(settings().pickup_address || '')}, с ${esc(settings().pickup_from || '7:00')}</span>`}
       </div>
       <nav class="nav"><button class="link" data-act="toOrders" style="background:${S.view === 'orders' ? '#f4f3f0' : 'transparent'}">Заказы</button>
+        ${S.data.certificates.length ? `<button class="link" data-act="toCerts" style="background:${S.view === 'certs' ? '#f4f3f0' : 'transparent'}">Сертификаты</button>` : ''}
         <button class="link" data-act="toFeedback" style="background:${S.view === 'feedback' ? '#f4f3f0' : 'transparent'}">Отзывы</button>
         <button class="link" data-act="logout" style="color:#6e696a;font-size:14px">Выйти</button></nav>
     </div>
-    ${isMenu ? `<div class="search-row"><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"><input class="note" id="comment" type="text" maxlength="500" value="${esc(S.comment)}" placeholder="Комментарий к заказу" aria-label="Комментарий к заказу"></div>` : ''}
+    ${isMenu ? `<div class="search-row"><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"><label class="note-box"><span>✎ Комментарий к заказу</span><input class="note" id="comment" type="text" maxlength="500" value="${esc(S.comment)}" placeholder="Ориентир, время, пожелания" aria-label="Комментарий к заказу"></label></div>` : ''}
   </header>
   ${isMenu ? `<div class="chips-bar"><div class="chips" aria-label="Категории">${chips}</div></div>` : ''}
-  ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : feedbackView()}
+  ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : S.view === 'certs' ? certsView() : feedbackView()}
   ${orderBar()}
-  </div>${modalView()}${successView()}`;
+  </div>${modalView()}${reviewView()}${successView()}`;
 }
 
 /* ---------- рендер ---------- */
 const app = document.getElementById('app');
 function render() {
-  try { document.body.classList.toggle('lock', !!(S.done || S.modal)); } catch (e) { /* не критично */ }
+  try { document.body.classList.toggle('lock', !!(S.done || S.modal || S.review)); } catch (e) { /* не критично */ }
   const ae = document.activeElement;
   const keep = ae && ae.id ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd } : null;
   const oldChips = document.querySelector('.chips'), chipsLeft = oldChips ? oldChips.scrollLeft : 0;
@@ -453,6 +463,7 @@ const actions = {
   logout: () => { S.cartReady = false; clearTimeout(S.cartTimer); store.del(TOKEN_KEY); S.token = null; S.data = null; S.gate = null; S.qty = {}; S.cartOpen = false; S.view = 'menu'; S.authTab = 'login'; S.fatal = null; render(); },
   toMenu: () => { S.view = 'menu'; render(); },
   toOrders: () => { S.view = 'orders'; render(); window.scrollTo({ top: 0 }); fetch('/api/sync-statuses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token }) }).then((r) => r.json()).then((j) => { if (j && j.changed) return load(); }).catch(() => {}); },
+  toCerts: () => { S.view = 'certs'; render(); window.scrollTo({ top: 0 }); },
   toFeedback: () => { S.view = 'feedback'; render(); window.scrollTo({ top: 0 }); },
   fbKind: (el) => { S.fbText = val('fbText') || S.fbText; S.fbKind = el.dataset.v; S.fbError = ''; render(); },
   fbRate: (el) => { S.fbText = val('fbText') || S.fbText; S.fbRating = Number(el.dataset.v); render(); },
@@ -504,25 +515,30 @@ const actions = {
     S.cartNotice = missing.length ? 'Этих блюд сегодня нет в меню, они не добавлены: ' + missing.join(', ') + '.' : '';
     S.idem = null; S.qty = nq; S.addr = addr; S.pickup = false; S.modal = null; S.view = 'menu'; S.cartOpen = true; S.done = null; S.cartError = ''; render();
   },
-  submit: async () => {
+  submit: () => {
     const lines = cartLines(), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
     if (S.sending || !lines.length || S.data.client.stopped || ordersClosed()) return;
     if (!S.pickup && sum < minDelivery()) return;
-    const cntAll = lines.reduce((x, l) => x + l.qty, 0);
-    if (!window.confirm('Отправить заявку?\n' + lines.length + ' поз. · ' + cntAll + ' шт · ' + fmt(sum) + '\n' + (S.pickup ? 'Самовывоз' : 'Доставка: ' + S.addr))) return;
+    S.comment = val('comment') || S.comment; S.cartError = ''; S.review = true; render();
+  },
+  backReview: () => { if (S.sending) return; S.review = false; S.cartError = ''; render(); },
+  confirmSend: async () => {
+    const lines = cartLines(), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
+    if (S.sending || !lines.length || S.data.client.stopped || ordersClosed()) return;
+    if (!S.pickup && sum < minDelivery()) return;
     S.comment = val('comment') || S.comment; S.sending = true; S.cartError = ''; render();
     try {
       if (!S.idem) S.idem = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
       const r = await rpc('place_order', { p_token: S.token, p_items: lines.map((l) => ({ item_id: l.id, qty: l.qty })), p_pickup: S.pickup, p_address: S.pickup ? '' : S.addr, p_comment: S.comment, p_key: S.idem });
       S.done = { number: r.number, where: S.pickup ? 'Самовывоз: ' + (settings().pickup_address || '') : 'Доставка: ' + S.addr };
-      S.qty = {}; S.comment = ''; S.sending = false; S.idem = null; S.cartNotice = ''; S.cartInfo = ''; S.cartOpen = false;
+      S.qty = {}; S.comment = ''; S.sending = false; S.idem = null; S.cartNotice = ''; S.cartInfo = ''; S.cartOpen = false; S.review = false;
       pushToKitchen(r.number);
       await load();
     } catch (e) {
       S.sending = false;
       const dup = /^duplicate:(.+)$/.exec(e.code || '');
       if (dup) S.idem = null;
-      if (e.code === 'sleeping') { S.cartOpen = false; await load(); return; }
+      if (e.code === 'sleeping') { S.cartOpen = false; S.review = false; await load(); return; }
       S.cartError = e.code === 'stopped' ? stopText() : e.code === 'closed' ? closedText() : dup ? `Такая же заявка на этот адрес уже отправлена сегодня (№ ${dup[1]}). Измените состав или выберите другой адрес.`
         : e.code === 'below_min' ? 'Сумма заказа ниже минимальной для доставки.'
         : e.code === 'unauthorized' ? 'Доступ закрыт. Обратитесь к менеджеру.' : 'Не удалось отправить заявку. Попробуйте ещё раз или позвоните менеджеру.';
