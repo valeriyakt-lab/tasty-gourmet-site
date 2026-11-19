@@ -288,7 +288,7 @@ function ordersView() {
       <div class="order-top"><div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><b class="geo green" style="font-size:17px">№ ${esc(o.number)}</b><span class="muted" style="font-size:14px">${fdate(o.created_at)} · ${ftime(o.created_at)}</span></div>
         <b class="geo" style="font-size:17px;font-variant-numeric:tabular-nums">${fmt(o.total)}</b></div>
       <div class="muted" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px"><span class="pill" style="background:${st[1]};color:${st[2]}">${st[0]}</span>${o.pickup ? 'Самовывоз' : esc(o.address)}</div>
-      <div style="font-size:14px;line-height:1.6">${o.items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
+      <div class="oitems">${o.items.map((i) => `<div class="oi"><span class="oi-n">${esc(i.name)}</span><span class="oi-q">× ${i.qty}</span><span class="oi-s">${fmt(Number(i.qty) * Number(i.price || 0))}</span></div>`).join('')}</div>
       ${open ? `<ol class="timeline">${o.events.map((e) => eventView(e, o)).join('')}</ol>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn-ghost" data-act="toggleOrder" data-id="${o.id}">${open ? 'Скрыть историю' : 'История заявки'}</button>
