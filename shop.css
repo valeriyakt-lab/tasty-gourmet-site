@@ -95,9 +95,11 @@ footer.foot{margin-top:48px;padding:20px 0;border-top:1px solid #e3e0dc;display:
 .x{width:36px;height:36px;border:0;border-radius:50%;background:#f4f3f0;color:#393536;font:400 20px/1 Rubik,sans-serif}
 .pick{display:flex;align-items:center;gap:12px;text-align:left;border:1.5px solid;border-radius:16px;padding:12px 14px;font:500 15px Rubik,sans-serif;color:#393536}
 .pick i{width:18px;height:18px;border-radius:50%;border:2px solid;flex:none}
-aside.cart{position:fixed;top:0;right:0;bottom:0;z-index:41;width:min(460px,100vw);background:#f4f3f0;display:flex;flex-direction:column}
+aside.cart{position:fixed;top:0;right:0;bottom:0;z-index:41;width:min(460px,100vw);height:100vh;height:100dvh;max-height:100dvh;background:#f4f3f0;display:flex;flex-direction:column;overflow:hidden}
 .cart-h{padding:18px 20px;background:#fff}
-.cart-body{flex:1;overflow:auto;padding:14px 14px 0;display:grid;gap:12px;align-content:start}
+.cart-body{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;padding:14px 14px 16px;display:grid;gap:12px;align-content:start}
+.cart-h,.cart-foot{flex:none}
+body.lock{overflow:hidden;overscroll-behavior:none}
 .lines{background:#fff;border-radius:20px;overflow:hidden}
 .line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center;padding:12px 14px;border-top:1px solid #efece7}
 .line .rm{justify-self:start;border:0;background:none;padding:2px 0;color:#6e696a;font-size:13px}

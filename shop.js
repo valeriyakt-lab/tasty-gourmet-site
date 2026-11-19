@@ -414,6 +414,7 @@ function shopView() {
 /* ---------- рендер ---------- */
 const app = document.getElementById('app');
 function render() {
+  try { document.body.classList.toggle('lock', !!(S.cartOpen || S.modal)); } catch (e) { /* не критично */ }
   const ae = document.activeElement;
   const keep = ae && ae.id ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd } : null;
   if (S.loading && !S.data) app.innerHTML = '<div class="boot">Загрузка…</div>';
