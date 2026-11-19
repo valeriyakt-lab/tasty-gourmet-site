@@ -116,3 +116,14 @@ body.lock{overflow:hidden;overscroll-behavior:none}
 .oi:first-child{border-top:0}
 .oi-q{color:#6e696a;font-variant-numeric:tabular-nums}
 .oi-s{text-align:right;font-weight:500;font-variant-numeric:tabular-nums}
+
+/* нижняя панель заказа (вместо отдельной корзины) */
+.page{padding-bottom:170px}
+.obar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:#fff;box-shadow:0 -8px 24px rgba(57,53,54,.14);padding:10px 14px calc(10px + env(safe-area-inset-bottom))}
+.obar-in{max-width:960px;margin:0 auto;display:grid;gap:8px}
+.obar-panel{max-height:42vh;max-height:42dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;background:#f4f3f0;border-radius:16px;padding:8px}
+.obar-row{display:flex;align-items:center;gap:12px}
+.obar-sum{flex:1;min-width:0;text-align:left;border:0;background:none;padding:2px 0;color:#393536;font:inherit}
+.obar-sum u{text-decoration-thickness:1px;text-underline-offset:2px}
+.obar .btn[disabled]{opacity:.5}
+@media(max-width:420px){.obar .btn-orange{padding:14px 16px;font-size:15px}}
