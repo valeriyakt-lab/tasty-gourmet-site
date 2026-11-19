@@ -101,6 +101,7 @@ async function restoreCart() {
 }
 
 /* ---------- график работы ---------- */
+const ordersClosed = () => String((settings() || {}).orders_open) === '0';
 function sched() {
   const now = new Date(), wd = (now.getDay() + 6) % 7, hr = now.getHours();
   // заявки принимаются Пн–Чт до 19:00 и в Вс до 18:00 (на понедельник); в Пт и Сб заявки не принимаются
@@ -114,6 +115,7 @@ function sched() {
   }[mode];
   const week = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((l, i) =>
     `<span style="background:${i >= 5 ? 'transparent' : '#fff'};color:${i >= 5 ? '#a8a2a0' : '#393536'};box-shadow:${i === wd ? 'inset 0 0 0 2px ' + T[2] : i >= 5 ? 'inset 0 0 0 1px #d9d5d0' : 'none'}">${l}</span>`).join('');
+  if (ordersClosed()) return { title: 'Приём заявок временно закрыт', bg: '#fbe9de', fg: '#c95614', week };
   return { title: T[0], bg: T[1], fg: T[2], week };
 }
 
@@ -259,6 +261,7 @@ function dlUrl(c) {
   const name = String(c.title || 'certificate').replace(/[^\wА-Яа-яЁё.\- ]+/g, '').trim().replace(/\s+/g, '_') + '.' + ext;
   return c.file_url + (c.file_url.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(name);
 }
+const closedText = () => 'Приём заявок сейчас закрыт. Попробуйте позже' + (settings().manager_phone ? ' или позвоните менеджеру: ' + settings().manager_phone : '') + '.';
 const stopText = () => 'Приём заявок для вашей точки приостановлен. Пожалуйста, свяжитесь с менеджером' + (settings().manager_phone ? ': ' + settings().manager_phone : '') + '.';
 function stopBanner() { return `<div class="err" style="margin-top:20px;font-size:15px"><b>${esc(stopText())}</b></div>`; }
 
@@ -285,7 +288,7 @@ function ordersView() {
       <div class="order-top"><div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><b class="geo green" style="font-size:17px">№ ${esc(o.number)}</b><span class="muted" style="font-size:14px">${fdate(o.created_at)} · ${ftime(o.created_at)}</span></div>
         <b class="geo" style="font-size:17px;font-variant-numeric:tabular-nums">${fmt(o.total)}</b></div>
       <div class="muted" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px"><span class="pill" style="background:${st[1]};color:${st[2]}">${st[0]}</span>${o.pickup ? 'Самовывоз' : esc(o.address)}</div>
-      <div style="font-size:14px;line-height:1.6">${o.items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
+      <div class="oitems">${o.items.map((i) => `<div class="oi"><span class="oi-n">${esc(i.name)}</span><span class="oi-q">× ${i.qty}</span><span class="oi-s">${fmt(Number(i.qty) * Number(i.price || 0))}</span></div>`).join('')}</div>
       ${open ? `<ol class="timeline">${o.events.map((e) => eventView(e, o)).join('')}</ol>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn-ghost" data-act="toggleOrder" data-id="${o.id}">${open ? 'Скрыть историю' : 'История заявки'}</button>
@@ -369,12 +372,12 @@ function cartView() {
         <div style="font-weight:500">${esc(where)}</div>
         <textarea id="comment" rows="2" maxlength="500" placeholder="Комментарий: ориентир, время, пожелания" class="inp" style="font-size:15px;resize:vertical">${esc(S.comment)}</textarea></div></div>
       <div class="cart-foot">
-        ${stopped ? `<div class="err">${esc(stopText())}</div>` : ''}
+        ${stopped ? `<div class="err">${esc(stopText())}</div>` : ordersClosed() ? `<div class="err">${esc(closedText())}</div>` : ''}
         ${S.cartError ? `<div class="err">${esc(S.cartError)}</div>` : ''}
         ${!S.pickup ? `<div style="display:grid;gap:6px"><div style="font-size:14px;color:${short ? '#b53137' : '#008037'}">${short ? `До минимальной суммы доставки ${fmt(min)} осталось ${fmt(min - sum)}` : 'Минимальная сумма доставки набрана'}</div>
           <div class="bar"><div style="width:${Math.min(100, min ? sum / min * 100 : 100)}%;background:${short ? '#e0641c' : '#008037'}"></div></div></div>` : ''}
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><span class="muted">${cnt} шт · ${lines.length} поз.</span><b class="geo" style="font-size:24px;font-variant-numeric:tabular-nums">${fmt(sum)}</b></div>
-        <button class="btn btn-orange" data-act="submit" ${short || S.sending || stopped ? 'disabled' : ''} style="padding:16px 22px;font-size:17px">${S.sending ? 'Отправляем…' : 'Отправить заявку · ' + fmt(sum)}</button></div>`;
+        <button class="btn btn-orange" data-act="submit" ${short || S.sending || stopped || ordersClosed() ? 'disabled' : ''} style="padding:16px 22px;font-size:17px">${S.sending ? 'Отправляем…' : 'Отправить заявку · ' + fmt(sum)}</button></div>`;
   }
   return `<div class="shade" style="z-index:40" data-act="closeCart"></div><aside class="cart" role="dialog" aria-label="Корзина">
     <div class="cart-h"><div class="geo" style="font-weight:700;font-size:22px;text-transform:uppercase">${S.done ? 'Готово' : 'Корзина'}</div>
@@ -503,7 +506,7 @@ const actions = {
   },
   submit: async () => {
     const lines = cartLines(), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
-    if (S.sending || !lines.length || S.data.client.stopped) return;
+    if (S.sending || !lines.length || S.data.client.stopped || ordersClosed()) return;
     if (!S.pickup && sum < minDelivery()) return;
     S.comment = val('comment') || S.comment; S.sending = true; S.cartError = ''; render();
     try {
@@ -518,7 +521,7 @@ const actions = {
       const dup = /^duplicate:(.+)$/.exec(e.code || '');
       if (dup) S.idem = null;
       if (e.code === 'sleeping') { S.cartOpen = false; await load(); return; }
-      S.cartError = e.code === 'stopped' ? stopText() : dup ? `Такая же заявка на этот адрес уже отправлена сегодня (№ ${dup[1]}). Измените состав или выберите другой адрес.`
+      S.cartError = e.code === 'stopped' ? stopText() : e.code === 'closed' ? closedText() : dup ? `Такая же заявка на этот адрес уже отправлена сегодня (№ ${dup[1]}). Измените состав или выберите другой адрес.`
         : e.code === 'below_min' ? 'Сумма заказа ниже минимальной для доставки.'
         : e.code === 'unauthorized' ? 'Доступ закрыт. Обратитесь к менеджеру.' : 'Не удалось отправить заявку. Попробуйте ещё раз или позвоните менеджеру.';
       render();
