@@ -480,7 +480,7 @@ function render() {
   const body = (isMgr() && !MANAGER_TABS.includes(S.tab) ? () => '' : { dashboard: dashboardTab, orders: ordersTab, requests: requestsTab, clients: clientsTab, feedback: feedbackTab, menu: menuTab, certs: certsTab, settings: settingsTab }[S.tab])();
   app.innerHTML = `<header class="bar"><div class="bar-in"><span class="brand">Tasty Gourmet</span>
     ${tabsFor().map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}${k === 'requests' && S.newReq ? `<span class="n">${S.newReq}</span>` : ''}${k === 'feedback' && S.newFb ? `<span class="n">${S.newFb}</span>` : ''}</button>`).join('')}
-    <span class="spacer"></span><span class="muted">${esc(S.user.email)}</span><button class="btn g" data-act="logout">Выйти</button></div></header>
+    <span class="spacer"></span><span class="muted">${esc(S.user.email)}</span><button class="btn g" data-act="chPwd">Сменить пароль</button><button class="btn g" data-act="logout">Выйти</button></div></header>
     <main>${S.msg ? `<div class="msg">${esc(S.msg)}</div>` : ''}${S.err ? `<div class="msg err">${esc(S.err)}</div>` : ''}${body}</main>`;
   if (keep) { const el = document.getElementById(keep); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} } }
 }
@@ -490,6 +490,13 @@ const ask = (t) => window.confirm(t);
 const val = (id) => (document.getElementById(id) || {}).value || '';
 const A = {
   tab: async (el) => { S.tab = el.dataset.v; S.client = null; await loadTab(); },
+  chPwd: async () => {
+    const p = window.prompt('Новый пароль (не короче 10 символов):'); if (p === null) return;
+    if (p.length < 10) return note('Пароль должен быть не короче 10 символов', true);
+    const { error } = await db.auth.updateUser({ password: p });
+    if (error) return note(error.message, true);
+    note('Пароль изменён');
+  },
   reload: () => loadTab(),
   toggleOrders: async () => {
     const open = S.ordersOpen !== false;
