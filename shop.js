@@ -343,22 +343,21 @@ function modalView() {
     <div class="modal-h"><div class="geo" style="font-weight:700;font-size:20px;text-transform:uppercase">${esc(title)}</div><button class="x" data-act="closeModal" aria-label="Закрыть">×</button></div>${body}</div>`;
 }
 
-function cartView() {
-  if (!S.cartOpen) return '';
+function successView() {
+  if (!S.done) return '';
+  return `<div class="shade" style="z-index:50" data-act="finish"></div><div class="modal" role="dialog" aria-label="Заказ принят" style="text-align:center;justify-items:center">
+    <div style="width:64px;height:64px;border-radius:50%;background:#008037;color:#fff;display:grid;place-items:center;font:700 30px Geologica,sans-serif;margin:0 auto">✓</div>
+    <div class="geo green" style="font-weight:700;font-size:24px">Заказ № ${esc(S.done.number)} принят</div>
+    <p class="muted" style="margin:0">${esc(S.done.where)}<br>Статус заявки смотрите в разделе «Мои заказы».</p>
+    <button class="btn btn-green" data-act="finish" style="margin-top:8px">Готово</button></div>`;
+}
+
+// Нижняя панель заказа: сумма и кнопка «Отправить заявку» всегда под рукой, список выбранного раскрывается над ней.
+function orderBar() {
   const lines = cartLines(), cnt = lines.reduce((a, l) => a + l.qty, 0), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
-  const min = minDelivery(), stopped = S.data.client.stopped, short = !S.pickup && cnt && sum < min;
-  const where = S.pickup ? 'Самовывоз: ' + (settings().pickup_address || '') : 'Доставка: ' + S.addr;
-  let inner;
-  if (S.done) {
-    inner = `<div class="center"><div style="width:64px;height:64px;border-radius:50%;background:#008037;color:#fff;display:grid;place-items:center;font:700 30px Geologica,sans-serif;margin:0 auto">✓</div>
-      <div class="geo green" style="font-weight:700;font-size:24px">Заказ № ${esc(S.done.number)} принят</div>
-      <p class="muted" style="margin:0">${esc(S.done.where)}<br>Статус заявки смотрите в разделе «Мои заказы».</p>
-      <button class="btn btn-green" data-act="finish" style="margin-top:8px">Готово</button></div>`;
-  } else if (!cnt) {
-    inner = `<div class="center"><div class="geo" style="font-weight:600;font-size:18px">В корзине пусто</div><p class="muted" style="margin:0">Добавьте блюда из меню</p>
-      <button data-act="closeCart" style="border:0;border-radius:999px;padding:12px 22px;background:#fbe9de;color:#c95614;font:600 15px Rubik,sans-serif">Перейти в меню</button></div>`;
-  } else {
-    inner = `<div class="cart-body">
+  if (!cnt) return '';
+  const min = minDelivery(), stopped = S.data.client.stopped, short = !S.pickup && sum < min, off = stopped || ordersClosed();
+  const panel = S.cartOpen ? `<div class="obar-panel">
       <div class="lines">${lines.map((l) => `<div class="line">
         <div style="min-width:0"><div style="font-weight:500;line-height:1.3">${esc(l.name)}</div><div class="muted" style="font-size:13px">${fmt(l.price)} × ${l.qty}</div></div>
         <div class="geo" style="font-weight:600;font-size:16px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right">${fmt(l.price * l.qty)}</div>
@@ -366,22 +365,18 @@ function cartView() {
         <div class="stepper sm"><button class="m" data-act="dec" data-id="${l.id}" aria-label="Убрать">−</button>
           <input type="text" inputmode="numeric" value="${l.qty}" data-chg="qty" data-id="${l.id}" aria-label="Количество">
           <button class="p" data-act="inc" data-id="${l.id}" aria-label="Добавить">+</button></div></div>`).join('')}</div>
-      ${S.cartInfo ? `<div class="err" style="background:#e7f2eb;color:#006a2e">${esc(S.cartInfo)}</div>` : ''}
-      ${S.cartNotice ? `<div class="err" style="background:#fdf3dc;color:#8a6410">${esc(S.cartNotice)}</div>` : ''}
-      <div class="box"><div class="muted" style="font-size:13px;font-weight:500">${S.pickup ? 'Получение' : 'Адрес доставки'}</div>
-        <div style="font-weight:500">${esc(where)}</div>
-        <textarea id="comment" rows="2" maxlength="500" placeholder="Комментарий: ориентир, время, пожелания" class="inp" style="font-size:15px;resize:vertical">${esc(S.comment)}</textarea></div></div>
-      <div class="cart-foot">
-        ${stopped ? `<div class="err">${esc(stopText())}</div>` : ordersClosed() ? `<div class="err">${esc(closedText())}</div>` : ''}
-        ${S.cartError ? `<div class="err">${esc(S.cartError)}</div>` : ''}
-        ${!S.pickup ? `<div style="display:grid;gap:6px"><div style="font-size:14px;color:${short ? '#b53137' : '#008037'}">${short ? `До минимальной суммы доставки ${fmt(min)} осталось ${fmt(min - sum)}` : 'Минимальная сумма доставки набрана'}</div>
-          <div class="bar"><div style="width:${Math.min(100, min ? sum / min * 100 : 100)}%;background:${short ? '#e0641c' : '#008037'}"></div></div></div>` : ''}
-        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><span class="muted">${cnt} шт · ${lines.length} поз.</span><b class="geo" style="font-size:24px;font-variant-numeric:tabular-nums">${fmt(sum)}</b></div>
-        <button class="btn btn-orange" data-act="submit" ${short || S.sending || stopped || ordersClosed() ? 'disabled' : ''} style="padding:16px 22px;font-size:17px">${S.sending ? 'Отправляем…' : 'Отправить заявку · ' + fmt(sum)}</button></div>`;
-  }
-  return `<div class="shade" style="z-index:40" data-act="closeCart"></div><aside class="cart" role="dialog" aria-label="Корзина">
-    <div class="cart-h"><div class="geo" style="font-weight:700;font-size:22px;text-transform:uppercase">${S.done ? 'Готово' : 'Корзина'}</div>
-      <button class="x" data-act="closeCart" aria-label="Закрыть" style="width:40px;height:40px;font-size:22px">×</button></div>${inner}</aside>`;
+      <textarea id="comment" rows="2" maxlength="500" placeholder="Комментарий: ориентир, время, пожелания" class="inp" style="font-size:15px;resize:vertical;width:100%;margin-top:8px">${esc(S.comment)}</textarea></div>` : '';
+  return `<div class="obar"><div class="obar-in">
+    ${panel}
+    ${S.cartInfo ? `<div class="err" style="background:#e7f2eb;color:#006a2e">${esc(S.cartInfo)}</div>` : ''}
+    ${S.cartNotice ? `<div class="err" style="background:#fdf3dc;color:#8a6410">${esc(S.cartNotice)}</div>` : ''}
+    ${stopped ? `<div class="err">${esc(stopText())}</div>` : ordersClosed() ? `<div class="err">${esc(closedText())}</div>` : ''}
+    ${S.cartError ? `<div class="err">${esc(S.cartError)}</div>` : ''}
+    ${short ? `<div style="font-size:14px;color:#b53137;line-height:1.3">До минимальной суммы доставки ${fmt(min)} осталось ${fmt(min - sum)}</div>` : ''}
+    <div class="obar-row">
+      <button class="obar-sum" data-act="openCart" aria-expanded="${S.cartOpen ? 'true' : 'false'}"><span class="muted" style="font-size:13px">${cnt} шт · ${lines.length} поз. <u>${S.cartOpen ? 'скрыть ▾' : 'список ▴'}</u></span><b class="geo" style="font-size:22px;font-variant-numeric:tabular-nums;display:block">${fmt(sum)}</b></button>
+      <button class="btn btn-orange" data-act="submit" ${short || S.sending || off ? 'disabled' : ''} style="padding:15px 22px;font-size:16px;white-space:nowrap">${S.sending ? 'Отправляем…' : 'Отправить заявку'}</button>
+    </div></div></div>`;
 }
 
 function shopView() {
@@ -407,14 +402,14 @@ function shopView() {
     ${isMenu ? `<div class="chips">${chips}<input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Поиск блюда" aria-label="Поиск блюда"></div>` : ''}
   </header>
   ${isMenu ? menuView() : S.view === 'orders' ? ordersView() : feedbackView()}
-  ${cnt && !S.cartOpen ? `<div class="float"><button data-act="openCart"><span style="font:600 16px Rubik,sans-serif">Корзина</span><span style="font-size:14px;opacity:.9;flex:1;text-align:left">${cnt} шт</span><span class="geo" style="font-weight:700;font-size:18px;font-variant-numeric:tabular-nums">${fmt(sum)}</span></button></div>` : ''}
-  </div>${modalView()}${cartView()}`;
+  ${orderBar()}
+  </div>${modalView()}${successView()}`;
 }
 
 /* ---------- рендер ---------- */
 const app = document.getElementById('app');
 function render() {
-  try { document.body.classList.toggle('lock', !!(S.cartOpen || S.modal)); } catch (e) { /* не критично */ }
+  try { document.body.classList.toggle('lock', !!(S.done || S.modal)); } catch (e) { /* не критично */ }
   const ae = document.activeElement;
   const keep = ae && ae.id ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd } : null;
   if (S.loading && !S.data) app.innerHTML = '<div class="boot">Загрузка…</div>';
@@ -490,7 +485,7 @@ const actions = {
   dec: (el) => { const id = el.dataset.id; setQty(id, (S.qty[id] || 0) - 1); render(); },
   remove: (el) => { setQty(el.dataset.id, 0); render(); },
   add: (el) => { const id = el.dataset.id; const v = Number(S.pend[id]) || 1; setQty(id, (S.qty[id] || 0) + v); delete S.pend[id]; render(); },
-  openCart: () => { S.cartOpen = true; S.cartError = ''; render(); },
+  openCart: () => { S.cartOpen = !S.cartOpen; S.cartError = ''; render(); },
   closeCart: () => { S.cartOpen = false; render(); },
   finish: () => { S.cartOpen = false; S.done = null; S.view = 'menu'; render(); },
   closeModal: () => { S.modal = null; render(); },
@@ -526,12 +521,14 @@ const actions = {
     const lines = cartLines(), sum = lines.reduce((a, l) => a + l.qty * l.price, 0);
     if (S.sending || !lines.length || S.data.client.stopped || ordersClosed()) return;
     if (!S.pickup && sum < minDelivery()) return;
+    const cntAll = lines.reduce((x, l) => x + l.qty, 0);
+    if (!window.confirm('Отправить заявку?\n' + lines.length + ' поз. · ' + cntAll + ' шт · ' + fmt(sum) + '\n' + (S.pickup ? 'Самовывоз' : 'Доставка: ' + S.addr))) return;
     S.comment = val('comment') || S.comment; S.sending = true; S.cartError = ''; render();
     try {
       if (!S.idem) S.idem = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
       const r = await rpc('place_order', { p_token: S.token, p_items: lines.map((l) => ({ item_id: l.id, qty: l.qty })), p_pickup: S.pickup, p_address: S.pickup ? '' : S.addr, p_comment: S.comment, p_key: S.idem });
       S.done = { number: r.number, where: S.pickup ? 'Самовывоз: ' + (settings().pickup_address || '') : 'Доставка: ' + S.addr };
-      S.qty = {}; S.comment = ''; S.sending = false; S.idem = null; S.cartNotice = ''; S.cartInfo = '';
+      S.qty = {}; S.comment = ''; S.sending = false; S.idem = null; S.cartNotice = ''; S.cartInfo = ''; S.cartOpen = false;
       pushToKitchen(r.number);
       await load();
     } catch (e) {
