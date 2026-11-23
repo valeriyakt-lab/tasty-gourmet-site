@@ -1,5 +1,6 @@
 'use strict';
 const { sb, adminFromRequest, telegram, iiko, iikoIds, iikoConfigured } = require('./_lib');
+const MenuOrder = require('../menu-order.js');
 
 // Обновление меню из iiko («внешнее меню», как в старом сайте).
 // Вызывается: по расписанию (Vercel Cron, раз в сутки, нужен CRON_SECRET) и кнопкой в админке.
@@ -114,6 +115,18 @@ async function syncMenu() {
       name: x.name, iiko_id: x.id, image_url: x.image || null, price: x.price > 0 ? x.price : 0, category_id: catId[x.id] || null, sort: sort++, active: showNew && x.price > 0 })) ) });
     toAdd.forEach((x) => res.added.push(x.name));
   }
+
+  // порядок блюд внутри категорий (салаты → боулы → поке, завтраки → блины → сырники → каша → суп) закрепляется при каждой выгрузке
+  try {
+    const cats2 = (await sb('categories?select=id,name')) || [], all = (await sb('menu_items?select=id,name,category_id,sort&order=sort.asc,id.asc')) || [];
+    const fixes = [];
+    for (const c of cats2) {
+      const group = all.filter((i) => i.category_id === c.id);
+      MenuOrder.sortItems(c.name, group).forEach((it, idx) => { if (Number(it.sort) !== (idx + 1) * 10) fixes.push({ id: it.id, sort: (idx + 1) * 10 }); });
+    }
+    for (let i = 0; i < fixes.length; i += 10) await Promise.all(fixes.slice(i, i + 10).map((u) => patch('id=eq.' + u.id, { sort: u.sort })));
+    res.reordered = fixes.length;
+  } catch (e) { res.orderError = e.message; }
 
   res.newShown = showNew;
   res.at = new Date().toISOString();

@@ -5,8 +5,8 @@
   var RULES = [
     // «Салаты и боул»: сначала салаты, потом боулы, бибимпаб, поке
     { cat: /салат/i, groups: [/боул|бол\b|bowl/i, /пибимпаб|бибимпаб|бибимбап|пибимбап/i, /поке|poke/i] },
-    // «Завтраки и супы»: разные завтраки, творожный боул, блины, каша, суп дня
-    { cat: /завтрак/i, groups: [/творожн\S*\s+боул/i, /блин/i, /каш[аи]/i, /суп|борщ|крем[-\s]/i] }
+    // «Завтраки и супы»: разные завтраки, творожный боул, блины, сырники, каша, суп дня
+    { cat: /завтрак/i, groups: [/творожн\S*\s+боул/i, /блин/i, /сырник/i, /каш[аи]/i, /суп|борщ|крем[-\s]/i] }
   ];
   function rank(rule, name) {
     for (var i = 0; i < rule.groups.length; i++) if (rule.groups[i].test(name)) return i + 1;
@@ -22,4 +22,5 @@
       .map(function (x) { return x.it; });
   }
   root.MenuOrder = { sortItems: sortItems };
+  if (typeof module !== 'undefined' && module.exports) module.exports = root.MenuOrder;
 })(typeof window !== 'undefined' ? window : globalThis);
