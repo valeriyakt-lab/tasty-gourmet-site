@@ -432,7 +432,7 @@ function menuTab() {
   const real = items.filter((i) => i.active || (i.iiko_id && !i.sync_hidden));   // блюда выбранного меню; блюда других дней скрыты синхронизацией и видны только в «Дополнительно»
   const shown = real.filter((i) => i.active).length, hidden = real.length - shown, noPrice = real.filter((i) => !(Number(i.price) > 0)).length;
   const keep = (i) => !S.menuOnly || !i.active || !(Number(i.price) > 0);
-  const groups = cats.filter((c) => c.active).slice().sort((a, b) => a.sort - b.sort || a.id - b.id).map((c) => ({ c, rows: real.filter((i) => i.category_id === c.id && keep(i)) }));
+  const groups = cats.filter((c) => c.active).slice().sort((a, b) => a.sort - b.sort || a.id - b.id).map((c) => ({ c, rows: (window.MenuOrder ? window.MenuOrder.sortItems(c.name, real.filter((i) => i.category_id === c.id && keep(i))) : real.filter((i) => i.category_id === c.id && keep(i))) }));
   const loose = real.filter((i) => !cats.some((c) => c.active && c.id === i.category_id) && keep(i));
   const catOpts = Object.fromEntries([['', '— без категории —'], ...cats.map((c) => [c.id, c.name])]);
   return `<div class="row"><h1>Меню</h1><span class="spacer"></span>${isMgr() ? '' : '<button class="btn" data-act="newItem">+ Блюдо</button>'}</div>
