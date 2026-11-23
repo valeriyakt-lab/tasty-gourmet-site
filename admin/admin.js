@@ -646,7 +646,14 @@ document.addEventListener('submit', async (e) => {
   const { error } = await db.auth.signInWithPassword({ email: val('em'), password: val('pw') });
   if (error) { S.err = 'Неверный email или пароль'; render(); } else await boot();
 });
-document.addEventListener('input', (e) => { if (e.target.id === 'clientQ') { S.clientQ = e.target.value; render(); } });
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'clientQ') return;
+  S.clientQ = e.target.value;
+  // обновляем только таблицу клиентов, поле поиска остаётся на месте (зажатое удаление, курсор)
+  const tmp = document.createElement('div'); tmp.innerHTML = clientsTab();
+  const nu = tmp.querySelector('.card.scroll'), old = document.querySelector('main .card.scroll');
+  if (nu && old) old.replaceWith(nu); else render();
+});
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if ((el.tagName === 'SELECT' || el.type === 'date') && el.dataset.act && A[el.dataset.act]) return A[el.dataset.act](el);
