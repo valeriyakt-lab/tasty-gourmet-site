@@ -52,6 +52,8 @@ async function load() {
     else if (data.state) { S.gate = data; S.data = null; S.fatal = null; }
     else {
       S.gate = null; S.data = data; S.fatal = null;
+      // порядок блюд внутри категории (салаты → боулы → поке, завтраки → блины → каша → суп)
+      if (window.MenuOrder) (data.menu || []).forEach((c) => { c.items = window.MenuOrder.sortItems(c.name, c.items || []); });
       if (!S.addr || !data.addresses.includes(S.addr)) S.addr = data.addresses[0] || '';
       if (!S.cartReady) await restoreCart();
     }
