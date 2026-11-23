@@ -211,9 +211,20 @@ function dishCard(it) {
         <button data-act="add" data-id="${it.id}">Добавить</button></div>`}</div></article>`;
 }
 
+function catalogHtml(secs) {
+  return `${secs.map((s) => `<section class="cat" id="cat-${s.i}">
+      <h2 class="cat-h"><i style="background:${esc(s.c.color)}"></i>${esc(s.c.name)}</h2>
+      <div class="grid">${s.items.map(dishCard).join('')}</div></section>`).join('')}
+    ${secs.length ? '' : '<p class="empty">Ничего не найдено</p>'}`;
+}
+function menuSections() {
+  // слова запроса ищутся без окончаний (чтобы «говядина» находила «говядины», «курица» — «курицей»)
+  const words = norm(S.q.trim()).split(/\s+/).filter(Boolean).map((w) => (w.length >= 5 ? w.slice(0, w.length - 2) : w));
+  const ok = (name) => { const n = norm(name); return words.every((w) => n.includes(w)); };
+  return S.data.menu.map((c, i) => ({ c, i, items: c.items.filter((it) => ok(it.name)) })).filter((s) => s.items.length);
+}
 function menuView() {
-  const q = norm(S.q.trim());
-  const secs = S.data.menu.map((c, i) => ({ c, i, items: c.items.filter((it) => !q || norm(it.name).includes(q)) })).filter((s) => s.items.length);
+  const secs = menuSections();
   const certs = S.data.certificates;
   const stopped = S.data.client.stopped;
   return `<main>
@@ -221,10 +232,7 @@ function menuView() {
     ${ordersClosed() ? '<div class="closed-strip">Приём заявок временно закрыт</div>' : ''}
     ${settings().menu_day ? `<div class="day-pill">Меню на ${esc(DAY_ACC[settings().menu_day] || settings().menu_day)}</div>` : ''}
     ${holidayLines().length ? `<button class="holiday-strip" data-act="toSchedule">📅 ${esc(holidayLines()[0])}${holidayLines().length > 1 ? ' · ещё ' + (holidayLines().length - 1) : ''}</button>` : ''}
-    ${secs.map((s) => `<section class="cat" id="cat-${s.i}">
-      <h2 class="cat-h"><i style="background:${esc(s.c.color)}"></i>${esc(s.c.name)}</h2>
-      <div class="grid">${s.items.map(dishCard).join('')}</div></section>`).join('')}
-    ${secs.length ? '' : '<p class="empty">Ничего не найдено</p>'}
+    <div id="catalog">${catalogHtml(secs)}</div>
     <footer class="foot">
       <span><b class="geo green" style="text-transform:uppercase">Tasty Gourmet</b> · более 8 лет на рынке · ежедневно отгружаем 170 точкам</span>
       <span>Менеджер: ${esc(settings().manager_phone || '')}</span>
@@ -584,7 +592,11 @@ document.addEventListener('change', (e) => {
 });
 document.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.id === 'q') { S.q = el.value; render(); }
+  if (el.id === 'q') {
+    // поиск обновляет только список блюд: поле ввода не пересоздаётся, поэтому работают зажатое удаление, выделение и курсор
+    S.q = el.value; const box = document.getElementById('catalog');
+    if (box && S.data) box.innerHTML = catalogHtml(menuSections()); else render();
+  }
   else if (el.id === 'newAddr') { S.newAddr = el.value; const b = document.querySelector('[data-act="saveAddr"],[data-act="doRepeat"]'); if (b) b.disabled = S.modal === 'addr' ? S.newAddr.trim().length < 3 : !S.newAddr.trim(); }
   else if (el.id === 'comment') { S.comment = el.value; persistCart(); }
   else if (el.id === 'fbText') { S.fbText = el.value; }
