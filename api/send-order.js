@@ -38,7 +38,13 @@ module.exports = async (req, res) => {
 
     const phone = normPhone(order.clients && order.clients.phone);
     const ids = await iikoIds();
-    const comment = [order.pickup ? 'САМОВЫВОЗ' : '', order.comment, order.pickup ? '' : 'Адрес: ' + order.address, 'Заказ с сайта № ' + order.number].filter(Boolean).join(' | ');
+    // в iiko комментарий не длиннее 500 символов: служебные части (самовывоз, адрес, номер) сохраняем, комментарий клиента при необходимости сокращаем
+    const tail = [order.pickup ? '' : 'Адрес: ' + order.address, 'Заказ с сайта № ' + order.number].filter(Boolean).join(' | ');
+    const head = order.pickup ? 'САМОВЫВОЗ' : '';
+    const room = 490 - tail.length - head.length - 6;
+    let userNote = String(order.comment || '').trim();
+    if (userNote.length > Math.max(room, 0)) userNote = userNote.slice(0, Math.max(room - 1, 0)).trimEnd() + (room > 1 ? '…' : '');
+    const comment = [head, userNote, tail].filter(Boolean).join(' | ').slice(0, 500);
     const payload = {
       organizationId: ids.org,
       terminalGroupId: ids.tg,
@@ -93,6 +99,11 @@ module.exports = async (req, res) => {
     let tg = null;
     if (order) {
       try { await sb('orders?id=eq.' + order.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'failed', sending_at: null, iiko_error: msg.slice(0, 500) }) }); } catch (e2) { /* ошибку базы сообщит Telegram ниже */ }
+      // причина остаётся в истории заявки, даже когда заказ потом отправят заново
+      try {
+        const ev = ((await sb('order_events?select=id&order_id=eq.' + order.id + '&status=eq.failed&order=id.desc&limit=1')) || [])[0];
+        if (ev) await sb('order_events?id=eq.' + ev.id, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ note: msg.slice(0, 500) }) });
+      } catch (e3) { /* история необязательна */ }
     }
     tg = await telegram(['⚠️ Заказ не попал на кассу', order ? 'Заказ № ' + order.number + (order.clients ? ' · ' + order.clients.name : '') : 'Заказ не определён', 'Причина: ' + msg, order ? 'Отправьте заново в админ-панели (вкладка «Заказы»).' : ''].filter(Boolean).join('\n'));
     return res.status(e.config ? 500 : 502).json({ ok: false, error: msg, telegram: tg });
