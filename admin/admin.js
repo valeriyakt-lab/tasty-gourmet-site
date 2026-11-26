@@ -221,7 +221,8 @@ function ordersTab() {
     <div class="msg">Период: ${periodLabel()} · заказов: <b>${rows.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(rows))}</b></div>
     ${rows.length ? rows.map((o) => `<div class="card" style="${o.status === 'failed' ? 'box-shadow:inset 0 0 0 2px #b53137' : ''}">
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><b>${esc(o.clients ? o.clients.name : '')}</b><span class="spacer"></span><b class="geo">${fmt(o.total)}</b></div>
-      <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}${o.comment ? ' · «' + esc(o.comment) + '»' : ''}</div>
+      <div class="muted">${o.pickup ? 'Самовывоз' : esc(o.address)}</div>
+      ${o.comment ? `<div class="ocm"><b>Комментарий:</b> ${esc(o.comment)}</div>` : ''}
       <div>${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
       ${o.iiko_error ? `<div class="red">iiko: ${esc(isMgr() ? o.iiko_error.replace(/[0-9a-f]{32}/gi, '…') : o.iiko_error)}</div>` : ''}
       <div class="row"><span class="pill" style="background:${o.status === 'failed' ? '#f6e3e4' : o.status === 'done' ? '#e7f2eb' : '#efece7'}">${esc(STATUSES[o.status] || o.status)}</span>
@@ -301,7 +302,8 @@ function clientDetail() {
     <div class="msg">Период: ${periodLabel()} · заказов: <b>${S.clientOrders.length}</b> · сумма (без отменённых): <b>${fmt(ordersSum(S.clientOrders))}</b></div>
     ${S.clientOrders.map((o) => `<div style="border-top:1px solid #efece7;padding-top:8px;display:grid;gap:2px">
       <div class="row"><b class="geo green">№ ${esc(o.number)}</b><span class="muted">${fdt(o.created_at)}</span><span class="pill">${STATUSES[o.status] || o.status}</span><span class="spacer"></span><b>${fmt(o.total)}</b></div>
-      <div class="muted">${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div></div>`).join('') || '<span class="muted">За выбранный период заказов нет</span>'}</div>`;
+      <div class="muted">${o.order_items.map((i) => `${esc(i.name)} × ${i.qty}`).join(', ')}</div>
+      ${o.comment ? `<div class="ocm"><b>Комментарий:</b> ${esc(o.comment)}</div>` : ''}</div>`).join('') || '<span class="muted">За выбранный период заказов нет</span>'}</div>`;
 }
 
 function feedbackTab() {
