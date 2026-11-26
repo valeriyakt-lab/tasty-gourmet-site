@@ -116,7 +116,7 @@ function eventView(ev, o) {
   const where = o.pickup ? 'самовывоз' : o.address;
   const phone = settings().manager_phone || '';
   const T = {
-    new: ['Заявка отправлена с сайта', `${o.items.length} поз. · ${cnt} шт · ${where}`, '#008037', '#393536'],
+    new: ['Заявка отправлена с сайта', `${o.items.length} поз. · ${cnt} шт · ${where}${o.comment ? ' · комментарий: ' + o.comment : ''}`, '#008037', '#393536'],
     accepted: ['Заявка принята', 'Проверены цены, адрес и минимальная сумма', '#008037', '#393536'],
     cooking: ['Готовится на кухне', '', '#008037', '#393536'],
     delivering: ['Передана в доставку', '', '#008037', '#393536'],
@@ -292,6 +292,7 @@ function ordersView() {
         <b class="geo" style="font-size:17px;font-variant-numeric:tabular-nums">${fmt(o.total)}</b></div>
       <div class="muted" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px"><span class="pill" style="background:${st[1]};color:${st[2]}">${st[0]}</span>${o.pickup ? 'Самовывоз' : esc(o.address)}</div>
       <div class="oitems">${o.items.map((i) => `<div class="oi"><span class="oi-n">${esc(i.name)}</span><span class="oi-q">× ${i.qty}</span><span class="oi-s">${fmt(Number(i.qty) * Number(i.price || 0))}</span></div>`).join('')}</div>
+      ${o.comment ? `<div class="oc"><b>Комментарий:</b> ${esc(o.comment)}</div>` : ''}
       ${open ? `<ol class="timeline">${o.events.map((e) => eventView(e, o)).join('')}</ol>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn-ghost" data-act="toggleOrder" data-id="${o.id}">${open ? 'Скрыть историю' : 'История заявки'}</button>
